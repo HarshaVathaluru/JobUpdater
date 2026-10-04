@@ -8,8 +8,11 @@ import { ConfigService, ConfigModule } from '@nestjs/config';
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: async (configService: ConfigService) => {
-        const redisUrl = process.env.REDIS_URL;
+        let redisUrl = process.env.REDIS_URL;
         if (redisUrl) {
+          if (redisUrl.includes('upstash.io') && redisUrl.startsWith('redis://')) {
+            redisUrl = redisUrl.replace('redis://', 'rediss://');
+          }
           return {
             connection: {
               url: redisUrl,
