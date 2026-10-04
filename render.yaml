@@ -1,0 +1,62 @@
+services:
+  # ==========================================
+  # 1. NestJS Backend Web Service
+  # ==========================================
+  - type: web
+    name: auto-apply-backend
+    env: node
+    plan: free
+    rootDir: backend
+    buildCommand: npm install && npm run build
+    startCommand: npm run start:prod
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: DATABASE_URL
+        fromDatabase:
+          name: auto-apply-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: auto-apply-redis
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRATION
+        value: 7d
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: STORAGE_PATH
+        value: ./uploads
+
+  # ==========================================
+  # 2. Next.js Frontend Web Service
+  # ==========================================
+  - type: web
+    name: auto-apply-frontend
+    env: node
+    plan: free
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_PUBLIC_API_URL
+        fromService:
+          type: web
+          name: auto-apply-backend
+          envVarKey: RENDER_EXTERNAL_URL
+          # Appends /api path
+
+databases:
+  # ==========================================
+  # 3. PostgreSQL Database
+  # ==========================================
+  - name: auto-apply-db
+    plan: free
+    databaseName: auto_apply_job
+    user: postgres
