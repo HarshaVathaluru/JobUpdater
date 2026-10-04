@@ -15,15 +15,32 @@ import { ConfigService, ConfigModule } from '@nestjs/config';
         if (redisUrl.includes('upstash.io') && redisUrl.startsWith('redis://')) {
           redisUrl = redisUrl.replace('redis://', 'rediss://');
         }
-        return {
-          connection: {
-            url: redisUrl,
-            tls: redisUrl.startsWith('rediss://') ? { rejectUnauthorized: false } : undefined,
-            maxRetriesPerRequest: null,
-            enableReadyCheck: false,
-            retryStrategy: (times: number) => Math.min(times * 1000, 10000),
-          },
-        };
+        try {
+          const u = new URL(redisUrl);
+          return {
+            connection: {
+              host: u.hostname,
+              port: Number(u.port || 6379),
+              username: u.username || 'default',
+              password: u.password || undefined,
+              tls: u.protocol === 'rediss:' || u.hostname.includes('upstash.io') ? { rejectUnauthorized: false } : undefined,
+              maxRetriesPerRequest: null,
+              enableReadyCheck: false,
+              retryStrategy: (times: number) => Math.min(times * 1000, 10000),
+            },
+          };
+        } catch {
+          return {
+            connection: {
+              host: configService.get<string>('redis.host') || 'localhost',
+              port: configService.get<number>('redis.port') || 6379,
+              password: configService.get<string>('redis.password') || undefined,
+              maxRetriesPerRequest: null,
+              enableReadyCheck: false,
+              retryStrategy: (times: number) => Math.min(times * 1000, 10000),
+            },
+          };
+        }
         return {
           connection: {
             host: configService.get<string>('redis.host') || 'localhost',
