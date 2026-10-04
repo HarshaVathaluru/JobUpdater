@@ -43,10 +43,7 @@ services:
       - key: NODE_ENV
         value: production
       - key: NEXT_PUBLIC_API_URL
-        fromService:
-          type: web
-          name: auto-apply-backend
-          property: host
+        value: https://auto-apply-backend-8is9.onrender.com/api
 
 databases:
   # ==========================================
