@@ -11,15 +11,19 @@ export class DiscoveryService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
-    this.logger.log('Initializing Discovery Scheduler...');
-    // Schedule daily discovery repeat job to run every midnight (0 0 * * *) for daily fresh jobs
-    await this.discoveryQueue.add(
-      'run-discovery',
-      {},
-      {
-        repeat: { pattern: '0 0 * * *' },
-      },
-    );
+    try {
+      this.logger.log('Initializing Discovery Scheduler...');
+      // Schedule daily discovery repeat job to run every midnight (0 0 * * *) for daily fresh jobs
+      await this.discoveryQueue.add(
+        'run-discovery',
+        {},
+        {
+          repeat: { pattern: '0 0 * * *' },
+        },
+      );
+    } catch (err: any) {
+      this.logger.warn(`Discovery scheduler could not register repeating job: ${err?.message}`);
+    }
   }
 
   async triggerManualDiscovery(userId?: string) {

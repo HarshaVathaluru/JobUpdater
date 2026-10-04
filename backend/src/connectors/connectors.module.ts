@@ -10,9 +10,11 @@ import { NaukriConnector } from './naukri.connector';
 import { RemotiveConnector } from './remotive.connector';
 import { JobicyConnector } from './jobicy.connector';
 import { ArbeitnowConnector } from './arbeitnow.connector';
+import { QueueModule } from '../queue/queue.module';
 
 @Module({
   imports: [
+    QueueModule,
     BullModule.registerQueue({
       name: 'job-discovery',
     }),
