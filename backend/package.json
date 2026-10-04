@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "AI-powered job application platform - Backend",
   "scripts": {
-    "build": "nest build",
+    "build": "npx @nestjs/cli build",
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
