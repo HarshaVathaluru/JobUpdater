@@ -9,11 +9,13 @@ export function Sidebar() {
 
   const navigation = [
     { name: 'Dashboard', href: '/dashboard', icon: '📊' },
-    { name: 'Jobs', href: '/jobs', icon: '💼' },
-    { name: 'Applications', href: '/applications', icon: '📋' },
-    { name: 'Resume', href: '/resume', icon: '📄' },
-    { name: 'Preferences', href: '/preferences', icon: '⚙️' },
-    { name: 'Profile', href: '/profile', icon: '👤' },
+    { name: 'Jobs Discovery', href: '/jobs', icon: '💼' },
+    { name: 'Application Tracker', href: '/applications', icon: '📋' },
+    { name: 'Resume Studio', href: '/resume', icon: '📄' },
+    { name: 'AI Career Assistant', href: '/assistant', icon: '🤖' },
+    { name: 'Analytics & Funnel', href: '/analytics', icon: '📈' },
+    { name: 'Preferences & Sources', href: '/preferences', icon: '⚙️' },
+    { name: 'Profile & Grounding', href: '/profile', icon: '👤' },
   ];
 
   return (

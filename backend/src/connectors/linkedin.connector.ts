@@ -22,15 +22,39 @@ export class LinkedInConnector implements JobSourceConnector {
   }
 
   async searchJobs(criteria: JobSearchCriteria): Promise<DiscoveredJobPayload[]> {
-    const keyword = criteria.keywords && criteria.keywords.length > 0 ? criteria.keywords.join(' ') : 'Software Engineer';
+    const keyword = criteria.keywords && criteria.keywords.length > 0 ? criteria.keywords[0] : 'Software Engineer';
     const location = criteria.locations && criteria.locations.length > 0 ? criteria.locations[0] : 'India';
 
-    this.logger.log(`Searching LinkedIn live guest postings for '${keyword}' in '${location}'...`);
+    const modes = [
+      { mode: 'ONSITE', wt: '1' },
+      { mode: 'HYBRID', wt: '3' },
+      { mode: 'REMOTE', wt: '2' },
+    ];
 
+    const allJobs: DiscoveredJobPayload[] = [];
+
+    for (const { mode, wt } of modes) {
+      try {
+        const jobs = await this.fetchJobsForMode(keyword, location, mode as 'ONSITE' | 'HYBRID' | 'REMOTE', wt);
+        allJobs.push(...jobs);
+      } catch (err) {
+        this.logger.warn(`LinkedIn search error for mode ${mode}:`, err);
+      }
+    }
+
+    this.logger.log(`Discovered total ${allJobs.length} genuine live jobs from LinkedIn across work modes.`);
+    return allJobs;
+  }
+
+  private fetchJobsForMode(
+    keyword: string,
+    location: string,
+    workMode: 'ONSITE' | 'HYBRID' | 'REMOTE',
+    wt: string,
+  ): Promise<DiscoveredJobPayload[]> {
     const encodedKeyword = encodeURIComponent(keyword);
     const encodedLocation = encodeURIComponent(location);
-    // f_TPR=r86400 filters LinkedIn postings strictly to the past 24 hours (86,400 seconds)
-    const url = `https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords=${encodedKeyword}&location=${encodedLocation}&f_TPR=r86400&start=0`;
+    const url = `https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords=${encodedKeyword}&location=${encodedLocation}&f_WT=${wt}&start=0`;
 
     return new Promise((resolve) => {
       https
@@ -69,9 +93,9 @@ export class LinkedInConnector implements JobSourceConnector {
                     company,
                     title,
                     location: jobLocation,
-                    workMode: jobLocation.toLowerCase().includes('remote') ? 'REMOTE' : 'HYBRID',
+                    workMode,
                     employmentType: 'FULL_TIME',
-                    description: `${title} role at ${company} located in ${jobLocation}. Live posting on LinkedIn.`,
+                    description: `${title} role at ${company} located in ${jobLocation}. ${workMode} position on LinkedIn.`,
                     applicationUrl,
                     applicationMethod: 'LINKEDIN_PERMITTED_APPLICATION',
                     requiredSkills: [keyword],
@@ -80,13 +104,12 @@ export class LinkedInConnector implements JobSourceConnector {
                 }
               }
 
-              this.logger.log(`Discovered ${jobs.length} genuine live jobs from LinkedIn.`);
               resolve(jobs);
             });
           },
         )
         .on('error', (err) => {
-          this.logger.error('Failed to fetch LinkedIn jobs', err);
+          this.logger.error(`Failed to fetch LinkedIn ${workMode} jobs`, err);
           resolve([]);
         });
     });

@@ -35,68 +35,85 @@ export default function Register() {
   };
 
   return (
-    <div>
-      <div className="text-center mb-8">
-        <Link href="/" className="text-3xl font-extrabold text-blue-600">
-          AutoApplyForJob
+    <div className="max-w-md mx-auto w-full space-y-6">
+      <div className="text-center space-y-2">
+        <Link href="/" className="inline-flex items-center gap-2 text-2xl font-black text-slate-900 tracking-tight">
+          <span className="w-8 h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center font-black text-base shadow-md">
+            A
+          </span>
+          <span>AutoApply<span className="text-blue-600">ForJob</span></span>
         </Link>
-        <h2 className="mt-6 text-3xl font-extrabold text-gray-900">
-          Create an account
+        <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
+          Create candidate account
         </h2>
+        <p className="text-xs text-slate-500 font-medium">
+          Start autonomous matching and factual resume tailoring in seconds
+        </p>
       </div>
-      
-      <Card>
-        <CardBody>
-          <form className="space-y-6" onSubmit={handleSubmit}>
-            {error && (
-              <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-md text-sm">
-                {error}
-              </div>
-            )}
-            
-            <div className="grid grid-cols-2 gap-4">
-              <Input
-                label="First name"
-                value={firstName}
-                onChange={(e) => setFirstName(e.target.value)}
-              />
-              <Input
-                label="Last name"
-                value={lastName}
-                onChange={(e) => setLastName(e.target.value)}
-              />
+
+      <div className="bg-white rounded-3xl border border-slate-200/90 shadow-xl p-8 space-y-6">
+        <form className="space-y-4" onSubmit={handleSubmit}>
+          {error && (
+            <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-2xl text-xs font-semibold">
+              {error}
             </div>
-            
+          )}
+
+          <div className="grid grid-cols-2 gap-3">
             <Input
-              label="Email address"
-              type="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              label="First name"
+              value={firstName}
+              placeholder="Harsha"
+              onChange={(e) => setFirstName(e.target.value)}
             />
-            
             <Input
-              label="Password"
-              type="password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              label="Last name"
+              value={lastName}
+              placeholder="Reddy"
+              onChange={(e) => setLastName(e.target.value)}
             />
-            
-            <div>
-              <Button type="submit" className="w-full" isLoading={isLoading}>
-                Register
-              </Button>
-            </div>
-            
-            <div className="text-sm text-center">
-              <Link href="/login" className="font-medium text-blue-600 hover:text-blue-500">
-                Already have an account? Sign in
-              </Link>
-            </div>
-          </form>
-        </CardBody>
-      </Card>
+          </div>
+
+          <Input
+            label="Email address"
+            type="email"
+            required
+            placeholder="vathaluruharshavardhan@gmail.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
+
+          <Input
+            label="Password"
+            type="password"
+            required
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+
+          <div className="pt-2">
+            <Button
+              type="submit"
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs py-3 rounded-xl shadow-md transition-all"
+              isLoading={isLoading}
+            >
+              Create Account & Start Onboarding →
+            </Button>
+          </div>
+
+          <div className="text-xs text-center text-slate-500">
+            Already have an account?{' '}
+            <Link href="/login" className="font-bold text-blue-600 hover:underline">
+              Sign In
+            </Link>
+          </div>
+        </form>
+
+        <div className="pt-4 border-t border-slate-100 flex items-center justify-center gap-2 text-[11px] text-slate-400 font-medium">
+          <span>🛡️</span>
+          <span>Zero Hallucination Guaranteed • Privacy Protected</span>
+        </div>
+      </div>
     </div>
   );
 }

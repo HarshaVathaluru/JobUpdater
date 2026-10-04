@@ -4,6 +4,8 @@ import { Logger } from '@nestjs/common';
 import { JobsService } from '../jobs/jobs.service';
 import { LinkedInConnector } from './linkedin.connector';
 import { NaukriConnector } from './naukri.connector';
+import { ShineConnector } from './shine.connector';
+import { IndeedConnector } from './indeed.connector';
 import { RemotiveConnector } from './remotive.connector';
 import { JobicyConnector } from './jobicy.connector';
 import { ArbeitnowConnector } from './arbeitnow.connector';
@@ -17,6 +19,8 @@ export class DiscoveryProcessor extends WorkerHost {
     private readonly jobsService: JobsService,
     private readonly linkedInConnector: LinkedInConnector,
     private readonly naukriConnector: NaukriConnector,
+    private readonly shineConnector: ShineConnector,
+    private readonly indeedConnector: IndeedConnector,
     private readonly remotiveConnector: RemotiveConnector,
     private readonly jobicyConnector: JobicyConnector,
     private readonly arbeitnowConnector: ArbeitnowConnector,
@@ -31,101 +35,122 @@ export class DiscoveryProcessor extends WorkerHost {
     let keywords: string[] = [];
     let locations: string[] = [];
 
-    // If userId provided, check candidate preferences
+    // Check candidate preferences and profile
     if (job.data?.userId) {
       const preferences = await this.candidateService.getPreferences(job.data.userId);
-      if (preferences) {
-        keywords = preferences.targetRoles || [];
+      if (preferences && preferences.targetRoles && preferences.targetRoles.length > 0) {
+        keywords = preferences.targetRoles;
         locations = preferences.preferredLocations || [];
+      } else {
+        const profile = await this.candidateService.getProfile(job.data.userId);
+        if (profile) {
+          if (profile.skills && profile.skills.length > 0) {
+            keywords = ['Software Developer', 'Full Stack Developer', 'QA Automation Engineer', 'Java Developer'];
+          }
+          if (profile.location) {
+            locations = [profile.location, 'Bengaluru', 'Hyderabad', 'Pune'];
+          }
+        }
       }
     }
 
     if (keywords.length === 0) {
-      keywords = ['Software Engineer', 'Full Stack Developer', 'Backend Engineer'];
+      keywords = [
+        'Software Developer',
+        'Full Stack Developer',
+        'QA Automation Engineer',
+        'Java Developer',
+        'Automation Tester',
+      ];
     }
     if (locations.length === 0) {
-      locations = ['India'];
+      locations = ['Bengaluru', 'Hyderabad', 'Pune', 'India'];
     }
 
-    this.logger.log(`Executing multi-source discovery across LinkedIn, Remotive, Jobicy, Arbeitnow, Naukri with keywords: [${keywords.join(', ')}]`);
+    this.logger.log(
+      `Executing multi-source discovery across LinkedIn, Shine, Indeed, Remotive, Jobicy, Arbeitnow with keywords: [${keywords.join(', ')}]`,
+    );
 
     let totalIngested = 0;
 
-    // Strict 24-hour freshness threshold: Ingest jobs posted today / within the last 24 hours
-    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const filterFreshJobs = (jobs: any[]) => {
-      return jobs.filter((j) => {
-        if (!j.postedAt) return true;
-        const posted = new Date(j.postedAt);
-        return posted >= oneDayAgo;
-      });
-    };
-
     for (const kw of keywords) {
-      const criteria = { keywords: [kw], locations };
+      for (const loc of locations.slice(0, 3)) {
+        const criteria = { keywords: [kw], locations: [loc] };
 
-      // 1. Discover from LinkedIn live guest search (filtered to past 24h via f_TPR=r86400)
-      try {
-        const rawLinkedInJobs = await this.linkedInConnector.searchJobs(criteria);
-        const linkedInJobs = filterFreshJobs(rawLinkedInJobs);
-        if (linkedInJobs.length > 0) {
-          const count = await this.jobsService.ingestJobs(linkedInJobs);
-          totalIngested += count;
-          this.logger.log(`Ingested ${count} fresh daily jobs from LinkedIn for keyword "${kw}"`);
+        // 1. LinkedIn (Onsite, Hybrid, Remote)
+        try {
+          const rawLinkedInJobs = await this.linkedInConnector.searchJobs(criteria);
+          if (rawLinkedInJobs.length > 0) {
+            const count = await this.jobsService.ingestJobs(rawLinkedInJobs);
+            totalIngested += count;
+            this.logger.log(`Ingested ${count} jobs from LinkedIn for "${kw}" in "${loc}"`);
+          }
+        } catch (err) {
+          this.logger.warn(`LinkedIn discovery error for "${kw}"`, err);
         }
-      } catch (err) {
-        this.logger.warn(`LinkedIn discovery error for keyword "${kw}"`, err);
+
+        // 2. Shine.com (Verified Onsite Indian tech hubs)
+        try {
+          const rawShineJobs = await this.shineConnector.searchJobs(criteria);
+          if (rawShineJobs.length > 0) {
+            const count = await this.jobsService.ingestJobs(rawShineJobs);
+            totalIngested += count;
+            this.logger.log(`Ingested ${count} genuine onsite jobs from Shine for "${kw}" in "${loc}"`);
+          }
+        } catch (err) {
+          this.logger.warn(`Shine discovery error for "${kw}"`, err);
+        }
+
+        // 3. Indeed India
+        try {
+          const rawIndeedJobs = await this.indeedConnector.searchJobs(criteria);
+          if (rawIndeedJobs.length > 0) {
+            const count = await this.jobsService.ingestJobs(rawIndeedJobs);
+            totalIngested += count;
+            this.logger.log(`Ingested ${count} jobs from Indeed for "${kw}" in "${loc}"`);
+          }
+        } catch (err) {
+          this.logger.warn(`Indeed discovery error for "${kw}"`, err);
+        }
       }
 
-      // 2. Discover from Remotive (Live remote jobs API)
+      // Global feeds per keyword
+      const globalCriteria = { keywords: [kw], locations };
+
+      // 4. Remotive
       try {
-        const rawRemotiveJobs = await this.remotiveConnector.searchJobs(criteria);
-        const remotiveJobs = filterFreshJobs(rawRemotiveJobs);
-        if (remotiveJobs.length > 0) {
-          const count = await this.jobsService.ingestJobs(remotiveJobs);
+        const rawRemotiveJobs = await this.remotiveConnector.searchJobs(globalCriteria);
+        if (rawRemotiveJobs.length > 0) {
+          const count = await this.jobsService.ingestJobs(rawRemotiveJobs);
           totalIngested += count;
-          this.logger.log(`Ingested ${count} fresh daily jobs from Remotive for keyword "${kw}"`);
+          this.logger.log(`Ingested ${count} jobs from Remotive for "${kw}"`);
         }
       } catch (err) {
-        this.logger.warn(`Remotive discovery error for keyword "${kw}"`, err);
+        this.logger.warn(`Remotive discovery error for "${kw}"`, err);
       }
 
-      // 3. Discover from Jobicy (Live verified tech feeds)
+      // 5. Jobicy
       try {
-        const rawJobicyJobs = await this.jobicyConnector.searchJobs(criteria);
-        const jobicyJobs = filterFreshJobs(rawJobicyJobs);
-        if (jobicyJobs.length > 0) {
-          const count = await this.jobsService.ingestJobs(jobicyJobs);
+        const rawJobicyJobs = await this.jobicyConnector.searchJobs(globalCriteria);
+        if (rawJobicyJobs.length > 0) {
+          const count = await this.jobsService.ingestJobs(rawJobicyJobs);
           totalIngested += count;
-          this.logger.log(`Ingested ${count} fresh daily jobs from Jobicy for keyword "${kw}"`);
+          this.logger.log(`Ingested ${count} jobs from Jobicy for "${kw}"`);
         }
       } catch (err) {
-        this.logger.warn(`Jobicy discovery error for keyword "${kw}"`, err);
+        this.logger.warn(`Jobicy discovery error for "${kw}"`, err);
       }
 
-      // 4. Discover from Arbeitnow (Global tech jobs API)
+      // 6. Arbeitnow
       try {
-        const rawArbeitnowJobs = await this.arbeitnowConnector.searchJobs(criteria);
-        const arbeitnowJobs = filterFreshJobs(rawArbeitnowJobs);
-        if (arbeitnowJobs.length > 0) {
-          const count = await this.jobsService.ingestJobs(arbeitnowJobs);
+        const rawArbeitnowJobs = await this.arbeitnowConnector.searchJobs(globalCriteria);
+        if (rawArbeitnowJobs.length > 0) {
+          const count = await this.jobsService.ingestJobs(rawArbeitnowJobs);
           totalIngested += count;
-          this.logger.log(`Ingested ${count} fresh daily jobs from Arbeitnow for keyword "${kw}"`);
+          this.logger.log(`Ingested ${count} jobs from Arbeitnow for "${kw}"`);
         }
       } catch (err) {
-        this.logger.warn(`Arbeitnow discovery error for keyword "${kw}"`, err);
-      }
-
-      // 5. Discover from Naukri
-      try {
-        const naukriJobs = await this.naukriConnector.searchJobs(criteria);
-        if (naukriJobs.length > 0) {
-          const count = await this.jobsService.ingestJobs(naukriJobs);
-          totalIngested += count;
-          this.logger.log(`Ingested ${count} jobs from Naukri for keyword "${kw}"`);
-        }
-      } catch (err) {
-        this.logger.warn(`Naukri discovery error for keyword "${kw}"`, err);
+        this.logger.warn(`Arbeitnow discovery error for "${kw}"`, err);
       }
     }
 

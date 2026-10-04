@@ -70,11 +70,11 @@ export class JobsService {
     return ingestedCount;
   }
 
-  async getJobs() {
+  async getJobs(limit = 250) {
     return this.jobRepo.find({
       order: { createdAt: 'DESC' },
       where: { isActive: true },
-      take: 50,
+      take: limit,
     });
   }
 

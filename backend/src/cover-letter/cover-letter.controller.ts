@@ -15,6 +15,12 @@ export class CoverLetterController {
     return { data: document, message: 'Cover letter generated successfully' };
   }
 
+  @Get()
+  async getAllMyCoverLetters(@CurrentUser() user: UserEntity) {
+    const letters = await this.coverLetterService.getAllCoverLetters(user.id);
+    return { data: letters };
+  }
+
   @Get('job/:jobId')
   async getCoverLetterForJob(@Param('jobId') jobId: string, @CurrentUser() user: UserEntity) {
     const document = await this.coverLetterService.getCoverLetterForJob(user.id, jobId);
