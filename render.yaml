@@ -19,10 +19,7 @@ services:
           name: auto-apply-db
           property: connectionString
       - key: REDIS_URL
-        fromService:
-          type: redis
-          name: auto-apply-redis
-          property: connectionString
+        sync: false
       - key: JWT_SECRET
         generateValue: true
       - key: JWT_EXPIRATION
@@ -49,8 +46,7 @@ services:
         fromService:
           type: web
           name: auto-apply-backend
-          envVarKey: RENDER_EXTERNAL_URL
-          # Appends /api path
+          property: host
 
 databases:
   # ==========================================
@@ -59,4 +55,4 @@ databases:
   - name: auto-apply-db
     plan: free
     databaseName: auto_apply_job
-    user: postgres
+    user: jobuser

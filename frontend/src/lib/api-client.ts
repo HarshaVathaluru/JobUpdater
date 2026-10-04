@@ -1,7 +1,14 @@
 import axios, { AxiosInstance, AxiosResponse } from 'axios';
 import Cookies from 'js-cookie';
 
-const baseURL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
+let rawBaseURL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
+if (rawBaseURL && !rawBaseURL.startsWith('http://') && !rawBaseURL.startsWith('https://')) {
+  rawBaseURL = `https://${rawBaseURL}`;
+}
+if (rawBaseURL && !rawBaseURL.endsWith('/api')) {
+  rawBaseURL = `${rawBaseURL.replace(/\/+$/, '')}/api`;
+}
+const baseURL = rawBaseURL;
 
 export const apiClient: AxiosInstance = axios.create({
   baseURL,
