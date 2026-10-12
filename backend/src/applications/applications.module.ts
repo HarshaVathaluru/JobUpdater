@@ -8,6 +8,7 @@ import { JobEntity } from '../jobs/entities/job.entity';
 import { CandidateProfileEntity } from '../candidate/entities/candidate-profile.entity';
 import { JobMatchEntity } from '../matching/entities/job-match.entity';
 import { ResumeEntity } from '../resume/entities/resume.entity';
+import { ResumeVersionEntity } from '../resume/entities/resume-version.entity';
 import { DynamicAgentService } from './dynamic-agent.service';
 import { SubmissionService } from './submission.service';
 import { ApplicationsController } from './applications.controller';
@@ -25,6 +26,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
       CandidateProfileEntity,
       JobMatchEntity,
       ResumeEntity,
+      ResumeVersionEntity,
     ]),
     BrowserModule,
     NotificationsModule,

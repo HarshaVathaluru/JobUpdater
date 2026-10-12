@@ -47,7 +47,7 @@ export default function Register() {
           Create candidate account
         </h2>
         <p className="text-xs text-slate-500 font-medium">
-          Start autonomous matching and factual resume tailoring in seconds
+          Find resume matched jobs and prepare factual application documents
         </p>
       </div>
 
@@ -63,13 +63,13 @@ export default function Register() {
             <Input
               label="First name"
               value={firstName}
-              placeholder="Harsha"
+              placeholder="First name"
               onChange={(e) => setFirstName(e.target.value)}
             />
             <Input
               label="Last name"
               value={lastName}
-              placeholder="Reddy"
+              placeholder="Last name"
               onChange={(e) => setLastName(e.target.value)}
             />
           </div>
@@ -78,7 +78,7 @@ export default function Register() {
             label="Email address"
             type="email"
             required
-            placeholder="vathaluruharshavardhan@gmail.com"
+            placeholder="you@example.com"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
           />

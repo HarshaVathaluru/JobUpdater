@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Loading } from '@/components/ui/loading';
 import { api } from '@/lib/api-client';
 import { useToast } from '@/components/ui/toast';
@@ -18,6 +18,7 @@ interface ProcessState {
   currentStepIndex: number;
   progressPercent: number;
   resultData?: string;
+  resultStatus?: 'success' | 'review' | 'failure';
 }
 
 export default function ApplicationsPage() {
@@ -28,6 +29,7 @@ export default function ApplicationsPage() {
   const [selectedPacketApp, setSelectedPacketApp] = useState<any | null>(null);
   const [appEvents, setAppEvents] = useState<Record<string, any[]>>({});
   const [searchFilter, setSearchFilter] = useState('');
+  const initialFetchStarted = useRef(false);
   const { success, error: toastError, info } = useToast();
 
   const [modalState, setModalState] = useState<ProcessState>({
@@ -48,7 +50,11 @@ export default function ApplicationsPage() {
       setApps(list);
     } catch (error) {
       console.error('Failed to fetch applications', error);
-      toastError('Could not load applications.');
+      const requestError = error as any;
+      toastError(
+        requestError?.response?.data?.message || requestError?.message || 'Could not load applications. Check that the API server and database are available.',
+        'Applications unavailable',
+      );
     } finally {
       setLoading(false);
     }
@@ -74,6 +80,8 @@ export default function ApplicationsPage() {
   };
 
   useEffect(() => {
+    if (initialFetchStarted.current) return;
+    initialFetchStarted.current = true;
     fetchApps();
   }, []);
 
@@ -83,14 +91,14 @@ export default function ApplicationsPage() {
 
     setModalState({
       isOpen: true,
-      title: 'Autonomous Browser Form Filling Agent',
+      title: 'Inspect Application Portal',
       subtitle: `Target: ${appItem?.job?.company || 'Company'} — ${targetUrl}`,
       icon: '🤖',
       steps: [
-        'Launching headless Chrome session & navigating to portal...',
-        'Inspecting page DOM for candidate form fields & file upload inputs...',
-        'Injecting verified candidate profile (Email, Name, Phone, Resume)...',
-        'Validating form inputs & logging step-by-step activity trace...',
+        'Opening the employer page if a supported browser is configured...',
+        'Inspecting visible fields and login or CAPTCHA requirements...',
+        'Filling only fields that match your saved profile...',
+        'Saving the inspection result for your review...',
       ],
       currentStepIndex: 0,
       progressPercent: 20,
@@ -106,11 +114,11 @@ export default function ApplicationsPage() {
         ...p,
         currentStepIndex: 3,
         progressPercent: 100,
-        resultData: res?.message || 'Agent completed form autofill workflow!',
+        resultData: res?.message || 'Portal inspection finished.',
       }));
 
       fetchApps();
-      success(res?.message || 'Agent completed form workflow!', 'Agent Finished');
+      success(res?.message || 'Portal inspection finished.', 'Inspection Complete');
     } catch (err: any) {
       setModalState((p) => ({ ...p, isOpen: false }));
       toastError(err?.response?.data?.message || err?.message || 'Agent run encountered an issue.', 'Agent Failed');
@@ -123,14 +131,14 @@ export default function ApplicationsPage() {
     setActiveAppId(id);
     setModalState({
       isOpen: true,
-      title: 'Submitting Application to Employer Portal',
-      subtitle: `Dispatches candidate profile directly to ${appItem?.job?.company || 'Employer'}`,
+      title: 'Submit Application',
+      subtitle: `Attempting submission on ${appItem?.job?.company || 'the employer'} portal`,
       icon: '📤',
       steps: [
         'Verifying candidate profile, resume attachment & eligibility...',
         'Accessing employer gateway and preparing submission payload...',
         'Submitting application to employer portal & awaiting receipt...',
-        'Confirming application delivery and dispatching candidate notification...',
+        'Checking whether the employer portal confirms receipt...',
       ],
       currentStepIndex: 0,
       progressPercent: 25,
@@ -147,20 +155,56 @@ export default function ApplicationsPage() {
         ...p,
         currentStepIndex: 3,
         progressPercent: 100,
-        resultData: data?.message || 'Application submitted successfully!',
+        resultData: data?.message || 'Submission attempt finished. Check the status before retrying.',
+        resultStatus: data?.status === true ? 'success' : data?.requiresUserAction ? 'review' : 'failure',
       }));
 
       fetchApps();
-      if (data?.status === false && data?.requiresUserAction) {
-        info(data.message, 'User Action Required on Portal');
+      if (data?.status !== true) {
+        info(data?.message || 'The portal did not confirm receipt. Review the job site before retrying.', 'Not Confirmed');
       } else {
-        success(data?.message || 'Application submitted successfully!', 'Submission Complete');
+        success(data?.message || 'The employer portal confirmed receipt.', 'Submission Confirmed');
       }
     } catch (e: any) {
       setModalState((p) => ({ ...p, isOpen: false }));
       toastError(e?.response?.data?.message || e?.message || 'Submission failed!', 'Submission Error');
     } finally {
       setActiveAppId(null);
+    }
+  };
+
+  const markManualSubmission = async (app: any) => {
+    if (!window.confirm('Confirm that you completed and submitted this application on the employer site.')) return;
+    const confirmationId = window.prompt('Employer confirmation/reference number (optional):') || '';
+    try {
+      const response: any = await api.post(`/applications/${app.id}/mark-manual-submitted`, { confirmationId });
+      const result = response?.data || response;
+      if (result?.status === true) {
+        info(result.message || 'Marked submitted based on your confirmation.', 'Candidate confirmed');
+        await fetchApps();
+      } else {
+        toastError(response?.message || result?.message || 'Could not update the application status.');
+      }
+    } catch (error: any) {
+      toastError(error?.response?.data?.message || error?.message || 'Could not update the application status.');
+    }
+  };
+
+  const retryAfterPortalReview = async (app: any) => {
+    const confirmed = window.confirm(
+      'First open the employer portal and check your application history/email. Continue only if you verified that this application was NOT submitted. Retrying without checking could create a duplicate. Have you checked and confirmed it was not submitted?',
+    );
+    if (!confirmed) return;
+    try {
+      const response: any = await api.post(`/applications/${app.id}/authorize-retry`, { confirmedNotSubmitted: true });
+      const result = response?.data || response;
+      if (result?.status !== true) {
+        toastError(response?.message || result?.message || 'Retry was not authorized.');
+        return;
+      }
+      await submitApplication(app.id, app);
+    } catch (error: any) {
+      toastError(error?.response?.data?.message || error?.message || 'Could not authorize a retry.');
     }
   };
 
@@ -181,28 +225,35 @@ export default function ApplicationsPage() {
       title: 'Draft & Preparing',
       color: 'border-slate-300 bg-slate-50',
       badge: 'bg-slate-100 text-slate-700',
-      items: filteredApps.filter((a) => a.status === 'DISCOVERED' || a.status === 'APPLIED'),
+      items: filteredApps.filter((a) => ['DISCOVERED', 'ANALYZED', 'MATCHED', 'ELIGIBLE', 'RESUME_PREPARED', 'COVER_LETTER_PREPARED', 'APPLICATION_STARTED'].includes(a.status)),
     },
     {
       id: 'READY',
-      title: 'Ready to Apply',
+      title: 'Needs Review',
       color: 'border-blue-300 bg-blue-50/30',
       badge: 'bg-blue-100 text-blue-800',
-      items: filteredApps.filter((a) => a.status === 'READY' || a.status === 'AUTOFILLED'),
+      items: filteredApps.filter((a) => ['FORM_FILLING', 'REVIEW_REQUIRED', 'AUTH_REQUIRED', 'UNKNOWN_QUESTION', 'CAPTCHA_REQUIRED', 'FAILED'].includes(a.status)),
+    },
+    {
+      id: 'SUBMITTING',
+      title: 'Submitting',
+      color: 'border-amber-300 bg-amber-50/30',
+      badge: 'bg-amber-100 text-amber-800',
+      items: filteredApps.filter((a) => a.status === 'SUBMITTING'),
     },
     {
       id: 'SUBMITTED',
-      title: 'Submitted & Verified',
+      title: 'Portal or candidate confirmed',
       color: 'border-emerald-300 bg-emerald-50/30',
       badge: 'bg-emerald-100 text-emerald-800',
       items: filteredApps.filter((a) => a.status === 'SUBMITTED' || a.status === 'VERIFIED'),
     },
     {
       id: 'INTERVIEW',
-      title: 'Screening & Interview',
-      color: 'border-amber-300 bg-amber-50/30',
-      badge: 'bg-amber-100 text-amber-800',
-      items: filteredApps.filter((a) => a.status === 'INTERVIEW' || a.status === 'OFFER'),
+      title: 'Interview',
+      color: 'border-violet-300 bg-violet-50/30',
+      badge: 'bg-violet-100 text-violet-800',
+      items: filteredApps.filter((a) => a.status === 'INTERVIEW'),
     },
   ];
 
@@ -216,7 +267,7 @@ export default function ApplicationsPage() {
             <h1 className="text-2xl font-black text-slate-900 tracking-tight">Application Center & Tracker</h1>
           </div>
           <p className="mt-1 text-xs sm:text-sm text-slate-500">
-            Certified application packets, automated browser filling traces, and Kanban status tracking.
+            Application packets, portal submission status, and candidate review steps.
           </p>
         </div>
 
@@ -291,7 +342,7 @@ export default function ApplicationsPage() {
         </div>
       ) : viewMode === 'KANBAN' ? (
         /* KANBAN BOARD VIEW (Section 12) */
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
           {kanbanColumns.map((col) => (
             <div key={col.id} className="space-y-3">
               {/* Column Header */}
@@ -324,7 +375,7 @@ export default function ApplicationsPage() {
                             <span className="text-slate-400">{new Date(app.createdAt).toLocaleDateString()}</span>
                           </div>
                           <h4 className="font-bold text-sm text-slate-900 group-hover:text-blue-600 transition-colors line-clamp-1">
-                            {app.job?.title || 'Software Engineer'}
+                            {app.job?.title || 'Role unavailable'}
                           </h4>
                           <p className="text-xs text-slate-600 font-medium">{app.job?.company || 'Company'}</p>
                         </div>
@@ -339,6 +390,8 @@ export default function ApplicationsPage() {
                             📦 View Full Packet
                           </Button>
 
+                          {app.job?.applicationUrl && <a href={app.job.applicationUrl} target="_blank" rel="noreferrer" className="block text-center py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 text-[10px] font-bold">{app.job?.source?.toLowerCase() === 'jobicy' && app.job?.applicationMethod === 'SOURCE_LISTING_REQUIRES_MANUAL_APPLICATION' ? 'Open Jobicy listing, then click employer Apply ↗' : 'Open employer listing ↗'}</a>}
+                          {app.status !== 'SUBMITTED' && app.status !== 'VERIFIED' && <button onClick={() => void markManualSubmission(app)} className="w-full py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-800 text-[10px] font-bold">I submitted manually</button>}
                           <div className="grid grid-cols-2 gap-1.5">
                             <button
                               onClick={() => runAgent(app.id, app)}
@@ -348,11 +401,13 @@ export default function ApplicationsPage() {
                               🤖 Run Agent
                             </button>
                             <button
-                              onClick={() => submitApplication(app.id, app)}
+                              onClick={() => app.metadata?.submissionAttempted === true && app.status === 'REVIEW_REQUIRED'
+                                ? void retryAfterPortalReview(app)
+                                : void submitApplication(app.id, app)}
                               disabled={isProcessing}
                               className="py-1 px-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold transition-all shadow-sm"
                             >
-                              📤 Submit
+                              {app.metadata?.submissionAttempted === true && app.status === 'REVIEW_REQUIRED' ? 'Retry after portal check' : '📤 Submit'}
                             </button>
                           </div>
                         </div>
@@ -385,7 +440,7 @@ export default function ApplicationsPage() {
 
                 <div className="col-span-2">
                   <span className="px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase bg-emerald-100 text-emerald-800 border border-emerald-200">
-                    {app.status}
+                    {app.status === 'SUBMITTED' && app.metadata?.submissionMethod === 'candidate_confirmed_manual' ? 'SUBMITTED (YOU CONFIRMED)' : app.status}
                   </span>
                 </div>
 
@@ -401,8 +456,12 @@ export default function ApplicationsPage() {
                   <Button size="sm" variant="outline" onClick={() => openPacket(app)} className="text-xs font-bold">
                     Packet
                   </Button>
-                  <Button size="sm" onClick={() => submitApplication(app.id, app)} className="bg-emerald-600 text-white text-xs font-bold">
-                    Submit
+                  {app.job?.applicationUrl && <a href={app.job.applicationUrl} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-700">{app.job?.source?.toLowerCase() === 'jobicy' && app.job?.applicationMethod === 'SOURCE_LISTING_REQUIRES_MANUAL_APPLICATION' ? 'Open Jobicy listing ↗' : 'Open listing ↗'}</a>}
+                  {app.status !== 'SUBMITTED' && app.status !== 'VERIFIED' && <button onClick={() => void markManualSubmission(app)} className="text-xs font-bold text-blue-700">I submitted manually</button>}
+                  <Button size="sm" onClick={() => app.metadata?.submissionAttempted === true && app.status === 'REVIEW_REQUIRED'
+                    ? void retryAfterPortalReview(app)
+                    : void submitApplication(app.id, app)} className="bg-emerald-600 text-white text-xs font-bold">
+                    {app.metadata?.submissionAttempted === true && app.status === 'REVIEW_REQUIRED' ? 'Retry after portal check' : 'Submit'}
                   </Button>
                 </div>
               </div>
@@ -421,6 +480,7 @@ export default function ApplicationsPage() {
         currentStepIndex={modalState.currentStepIndex}
         progressPercent={modalState.progressPercent}
         resultData={modalState.resultData}
+        resultStatus={modalState.resultStatus}
         onClose={() => setModalState((prev) => ({ ...prev, isOpen: false }))}
       />
 

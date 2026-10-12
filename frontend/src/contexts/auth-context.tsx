@@ -25,8 +25,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const profile = await auth.getProfile();
           setUser(profile);
         }
-      } catch (error) {
-        console.error('Auth check failed', error);
+      } catch {
+        // Keep the app usable when the API is offline during local startup.
+        // The authenticated request will retry on the next page load; logging
+        // Axios network errors with console.error triggers Next.js's dev overlay.
+        setUser(null);
       } finally {
         setLoading(false);
       }

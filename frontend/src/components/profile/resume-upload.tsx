@@ -41,7 +41,7 @@ export function ResumeUpload({ onUploadSuccess }: { onUploadSuccess?: () => void
           'Content-Type': 'multipart/form-data',
         },
       });
-      const msg = 'Resume successfully parsed and candidate profile updated!';
+      const msg = 'Resume text was extracted. Review the parsed profile fields below for accuracy.';
       setSuccessMsg(msg);
       success(msg, 'Profile Updated');
       setFile(null);
@@ -66,7 +66,7 @@ export function ResumeUpload({ onUploadSuccess }: { onUploadSuccess?: () => void
       <CardBody>
         <div className="space-y-4">
           <p className="text-sm text-gray-500 leading-relaxed">
-            Upload your master resume (<span className="font-semibold text-gray-700">PDF or DOCX</span>). Our intelligence parser extracts your verified name, contact information, skills, work history, projects, and achievements into your candidate profile.
+            Upload your master resume (<span className="font-semibold text-gray-700">PDF or DOCX</span>). The parser extracts text and proposes profile fields; review those fields because extraction can be imperfect.
           </p>
 
           {/* Clean inline alert messages */}

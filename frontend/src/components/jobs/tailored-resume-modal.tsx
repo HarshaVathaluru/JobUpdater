@@ -29,10 +29,6 @@ export function TailoredResumeModal({
 
   if (!isOpen || !data) return null;
 
-  const before = data.beforeScore || 62;
-  const after = data.afterScore || 95;
-  const boost = data.improvement || (after - before);
-
   const handleCopy = () => {
     navigator.clipboard.writeText(data.content);
     setCopied(true);
@@ -61,17 +57,17 @@ export function TailoredResumeModal({
             <div className="flex flex-wrap items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
               <span className="text-xs font-bold uppercase tracking-wider text-emerald-800 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
-                ATS Optimized Tailored Resume
+                Resume Copy for Review
               </span>
               <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
-                100% Verified Factual Facts
+                Original resume text retained
               </span>
             </div>
             <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight leading-snug">
               {data.jobTitle}
             </h2>
             <p className="text-xs sm:text-sm font-semibold text-slate-500">
-              Customized specifically to pass ATS screening at <span className="text-slate-800 font-bold">{data.company}</span>
+              For <span className="text-slate-800 font-bold">{data.company}</span>. Review before using.
             </p>
           </div>
 
@@ -85,29 +81,7 @@ export function TailoredResumeModal({
           </button>
         </div>
 
-        {/* ATS Score Improvement Banner */}
-        <div className="px-6 py-4 bg-gradient-to-r from-slate-900 to-indigo-950 text-white flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-3">
-              <div className="text-center">
-                <div className="text-xs text-slate-400 uppercase font-semibold">Master Resume</div>
-                <div className="text-lg font-bold text-slate-300">{before}%</div>
-              </div>
-              <div className="text-slate-500 font-bold text-lg">➔</div>
-              <div className="text-center">
-                <div className="text-xs text-emerald-400 uppercase font-semibold">Tailored Match</div>
-                <div className="text-2xl font-extrabold text-emerald-400">{after}%</div>
-              </div>
-            </div>
-            <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold text-xs px-2.5 py-1 rounded-full flex items-center gap-1">
-              🚀 +{boost}% ATS Score Boost
-            </span>
-          </div>
-
-          <div className="text-xs text-slate-300 max-w-sm hidden md:block">
-            Aligned summary, emphasized role keywords, and restructured bullet points to pass automated resume screeners.
-          </div>
-        </div>
+        <div className="px-6 py-4 bg-slate-50 border-b text-sm text-slate-700">This copy preserves your source resume text. It does not claim an ATS score or add unverified facts. Review the requirements and edit the resume yourself if needed.</div>
 
         {/* Injected ATS Keywords Pill Bar */}
         {data.injectedKeywords && data.injectedKeywords.length > 0 && (

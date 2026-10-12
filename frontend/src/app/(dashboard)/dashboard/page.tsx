@@ -14,7 +14,7 @@ interface PriorityJob {
   location: string;
   workMode: string;
   source: string;
-  matchScore: number;
+  matchScore: number | null;
   aiReason: string;
 }
 
@@ -59,34 +59,26 @@ export default function Dashboard() {
     );
   }
 
-  const candidateFirstName = profile?.fullName ? profile.fullName.split(' ')[0] : 'Harsha';
+  const candidateFirstName = profile?.fullName ? profile.fullName.split(' ')[0] : 'there';
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
 
-  const strongMatchesCount = jobs.filter((j) => (j.requiredSkills || []).length > 0).length || 18;
-  const readyToApplyCount = apps.filter((a) => a.status === 'READY' || a.status === 'DISCOVERED').length;
+  const strongMatchesCount = jobs.filter((j) => (j.resumeMatch?.score ?? 0) >= 75).length;
+  const readyToApplyCount = apps.filter((a) => ['DISCOVERED', 'FORM_FILLING', 'REVIEW_REQUIRED'].includes(a.status)).length;
   const submittedCount = apps.filter((a) => a.status === 'SUBMITTED' || a.status === 'VERIFIED').length;
   const interviewCount = apps.filter((a) => a.status === 'INTERVIEW').length;
 
   // Curate top priority jobs ranked by relevance
-  const priorityJobs: PriorityJob[] = jobs.slice(0, 5).map((j, idx) => {
-    const score = 98 - idx * 3;
-    const reasons = [
-      'Strong Java & REST API match with verified experience',
-      'High overlap with React.js & Selenium test automation',
-      'Direct match for Full Stack & PostgreSQL credentials',
-      'Aligned with Mphasis & Zenitude.ai production skills',
-      'Fresh on-site tech opening matching target location',
-    ];
+  const priorityJobs: PriorityJob[] = jobs.slice(0, 5).map((j) => {
     return {
       id: j.id,
       title: j.title,
       company: j.company,
-      location: j.location || 'India',
-      workMode: j.workMode || 'ONSITE',
-      source: j.source || 'LinkedIn',
-      matchScore: score,
-      aiReason: reasons[idx % reasons.length],
+      location: j.location || 'Location not listed',
+      workMode: j.workMode || 'Unspecified',
+      source: j.source || 'Unknown source',
+      matchScore: j.resumeMatch?.score ?? null,
+      aiReason: j.resumeMatch?.explanation || 'Upload a resume to calculate keyword coverage.',
     };
   });
 
@@ -99,14 +91,13 @@ export default function Dashboard() {
           <div className="space-y-2">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-bold">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-              Live Pipeline Active • Multi-Platform Discovery Synced
+              Job search workspace
             </div>
             <h1 className="text-2xl sm:text-3xl font-black tracking-tight">
               {greeting}, {candidateFirstName}.
             </h1>
             <p className="text-slate-300 text-xs sm:text-sm max-w-2xl leading-relaxed">
-              We identified <strong className="text-white font-bold">{strongMatchesCount} strong matches</strong> today across LinkedIn, Shine, and Remotive. 
-              Your master resume and verified test automation credentials are ready for high-precision tailoring.
+              {strongMatchesCount} jobs currently have at least 75% required-skill keyword coverage against your uploaded resume. This is a transparent estimate, not an employer ATS score.
             </p>
           </div>
 
@@ -137,15 +128,15 @@ export default function Dashboard() {
           <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Strong Matches</span>
           <div className="mt-2 flex items-baseline gap-2">
             <span className="text-3xl font-black text-slate-900">{strongMatchesCount}</span>
-            <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">+18 today</span>
+            <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">Resume based</span>
           </div>
-          <span className="text-[11px] text-slate-500 mt-1 block">85%+ ATS compatibility</span>
+          <span className="text-[11px] text-slate-500 mt-1 block">At least 75% keyword coverage</span>
         </div>
 
         <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-md transition-all">
           <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Ready to Apply</span>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-3xl font-black text-indigo-600">{readyToApplyCount || 3}</span>
+            <span className="text-3xl font-black text-indigo-600">{readyToApplyCount}</span>
             <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded">Tailored</span>
           </div>
           <span className="text-[11px] text-slate-500 mt-1 block">Application packets ready</span>
@@ -154,8 +145,8 @@ export default function Dashboard() {
         <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-md transition-all">
           <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Submitted</span>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-3xl font-black text-emerald-600">{submittedCount || 1}</span>
-            <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">Verified</span>
+            <span className="text-3xl font-black text-emerald-600">{submittedCount}</span>
+            <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">Portal or candidate confirmed</span>
           </div>
           <span className="text-[11px] text-slate-500 mt-1 block">Confirmed submissions</span>
         </div>
@@ -170,12 +161,12 @@ export default function Dashboard() {
         </div>
 
         <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-md transition-all col-span-2 lg:col-span-1">
-          <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Response Rate</span>
+          <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Jobs Scored</span>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-3xl font-black text-blue-600">28.4%</span>
-            <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded">Avg 12%</span>
+            <span className="text-3xl font-black text-blue-600">{jobs.filter((j) => j.resumeMatch?.score !== null && j.resumeMatch?.score !== undefined).length}</span>
+            <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded">Scored</span>
           </div>
-          <span className="text-[11px] text-slate-500 mt-1 block">2.3x higher with ATS tailoring</span>
+          <span className="text-[11px] text-slate-500 mt-1 block">Jobs with parsed required skills</span>
         </div>
       </div>
 
@@ -185,35 +176,35 @@ export default function Dashboard() {
           <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
             Automated Career Pipeline Progress
           </h2>
-          <span className="text-xs font-semibold text-slate-500">Autonomous Step 4 of 5</span>
+          <span className="text-xs font-semibold text-slate-500">Review each step</span>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
           <div className="p-3 rounded-xl bg-blue-50 border border-blue-200 flex items-center gap-3">
             <span className="w-7 h-7 rounded-full bg-blue-600 text-white font-bold text-xs flex items-center justify-center flex-shrink-0">1</span>
             <div>
               <div className="text-xs font-bold text-blue-900">Discover</div>
-              <div className="text-[10px] text-blue-700">174 Live Postings</div>
+              <div className="text-[10px] text-blue-700">{jobs.length} available jobs</div>
             </div>
           </div>
           <div className="p-3 rounded-xl bg-blue-50 border border-blue-200 flex items-center gap-3">
             <span className="w-7 h-7 rounded-full bg-blue-600 text-white font-bold text-xs flex items-center justify-center flex-shrink-0">2</span>
             <div>
-              <div className="text-xs font-bold text-blue-900">ATS Match</div>
-              <div className="text-[10px] text-blue-700">Deterministic Score</div>
+              <div className="text-xs font-bold text-blue-900">Resume match</div>
+              <div className="text-[10px] text-blue-700">Keyword coverage estimate</div>
             </div>
           </div>
           <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center gap-3">
             <span className="w-7 h-7 rounded-full bg-emerald-600 text-white font-bold text-xs flex items-center justify-center flex-shrink-0">3</span>
             <div>
               <div className="text-xs font-bold text-emerald-900">Tailor Resume</div>
-              <div className="text-[10px] text-emerald-700">95%+ ATS Density</div>
+              <div className="text-[10px] text-emerald-700">Source text preserved</div>
             </div>
           </div>
           <div className="p-3 rounded-xl bg-indigo-50 border border-indigo-200 flex items-center gap-3">
             <span className="w-7 h-7 rounded-full bg-indigo-600 text-white font-bold text-xs flex items-center justify-center flex-shrink-0">4</span>
             <div>
               <div className="text-xs font-bold text-indigo-900">Browser Apply</div>
-              <div className="text-[10px] text-indigo-700">Autonomous Agent</div>
+              <div className="text-[10px] text-indigo-700">Review and submit on site</div>
             </div>
           </div>
           <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-center gap-3">
@@ -233,8 +224,8 @@ export default function Dashboard() {
           <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm overflow-hidden">
             <div className="p-6 border-b border-slate-100 flex items-center justify-between">
               <div>
-                <h2 className="text-lg font-black text-slate-900 tracking-tight">AI Priority Queue</h2>
-                <p className="text-xs text-slate-500 mt-0.5">Top vacancies ranked by fit score, freshness, and verified candidate profile</p>
+                <h2 className="text-lg font-black text-slate-900 tracking-tight">Resume matched jobs</h2>
+                <p className="text-xs text-slate-500 mt-0.5">Sorted by required-skill keyword coverage from your resume and profile</p>
               </div>
               <Link href="/jobs" className="text-xs font-bold text-blue-600 hover:underline">
                 View All ({jobs.length}) ➔
@@ -269,7 +260,7 @@ export default function Dashboard() {
                     <div className="flex items-center gap-1.5">
                       <span className="text-xs text-slate-400 font-semibold">Match:</span>
                       <span className="text-sm font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                        {job.matchScore}%
+                        {job.matchScore === null ? 'Not scored' : `${job.matchScore}%`}
                       </span>
                     </div>
                     <Link href="/jobs">
@@ -323,17 +314,16 @@ export default function Dashboard() {
             <div className="flex items-center gap-2">
               <span className="text-base">💡</span>
               <h3 className="text-xs font-bold uppercase tracking-wider text-indigo-900">
-                AI Strategic Recommendation
+                About match estimates
               </h3>
             </div>
             <p className="text-xs font-medium text-slate-700 leading-relaxed">
-              Your strongest match profile is <strong className="text-slate-900 font-bold">Full Stack & QA Automation Engineering</strong>. 
-              Jobs asking for React.js, Node.js, Selenium, and REST APIs have a <strong>94%+ ATS pass rate</strong> with your verified background at Zenitude.ai and Mphasis.
+              Resume keyword coverage counts listed job skills found in your uploaded resume and profile. It is a transparent estimate, not a prediction from an employer&apos;s ATS.
             </p>
             <div className="pt-2">
               <Link href="/jobs">
                 <button className="text-xs font-bold text-indigo-600 hover:text-indigo-800 hover:underline flex items-center gap-1">
-                  Filter for 90%+ Matches ➔
+                  Review resume matched jobs ➔
                 </button>
               </Link>
             </div>
@@ -349,30 +339,26 @@ export default function Dashboard() {
                 <span className="text-sm">⚠️</span>
                 <div className="text-xs text-amber-900">
                   <span className="font-bold block">Review Tailored Resumes</span>
-                  Generate tailored versions for 3 newly matched on-site openings.
+                  Review your resume copy before using it in an application.
                 </div>
               </div>
               <div className="p-3 rounded-xl bg-blue-50/80 border border-blue-200 flex items-start gap-2.5">
                 <span className="text-sm">ℹ️</span>
                 <div className="text-xs text-blue-900">
-                  <span className="font-bold block">Autonomous Agent Ready</span>
-                  Headless Chrome agent configured for direct portal applications.
+                  <span className="font-bold block">Employer portal review</span>
+                  Some portals require you to sign in, complete verification, or submit the form yourself.
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Skills Demand Snapshot (Section 5) */}
+          {/* Skills shown here come from the saved profile. */}
           <div className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-sm space-y-3">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">
-              High-Demand Skill Match
-            </h3>
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">Skills from your profile</h3>
             <div className="flex flex-wrap gap-1.5">
-              {['Java', 'React.js', 'Next.js', 'Node.js', 'REST APIs', 'Selenium WebDriver', 'Tosca', 'PostgreSQL', 'Agile/Scrum'].map((sk) => (
-                <span key={sk} className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-slate-100 text-slate-700 border border-slate-200 flex items-center gap-1">
-                  <span className="text-emerald-500 text-[10px]">✓</span> {sk}
-                </span>
-              ))}
+              {(profile?.skills || []).length > 0 ? profile.skills.map((skill: string) => (
+                <span key={skill} className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-slate-100 text-slate-700 border border-slate-200">{skill}</span>
+              )) : <span className="text-xs text-slate-500">Upload a resume or add skills to your profile to see them here.</span>}
             </div>
           </div>
         </div>

@@ -8,7 +8,7 @@ export default () => ({
     database: process.env.DATABASE_NAME || 'auto_apply_job',
   },
   jwt: {
-    secret: process.env.JWT_SECRET || 'change-me-in-production',
+    secret: process.env.JWT_SECRET || '',
     expiresIn: process.env.JWT_EXPIRATION || '7d',
   },
   redis: {

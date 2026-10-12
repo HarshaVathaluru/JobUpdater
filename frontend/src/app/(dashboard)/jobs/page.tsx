@@ -33,6 +33,11 @@ export default function JobsPage() {
   const [workModeFilter, setWorkModeFilter] = useState<'ALL' | 'ONSITE' | 'HYBRID' | 'REMOTE'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<'MATCH' | 'NEWEST' | 'ONSITE'>('MATCH');
+  const [resumeMatchesOnly, setResumeMatchesOnly] = useState(true);
+  const [externalSearch, setExternalSearch] = useState({ roles: [] as string[], locations: [] as string[] });
+  const [showExternalImport, setShowExternalImport] = useState(false);
+  const [savingExternalJob, setSavingExternalJob] = useState(false);
+  const [externalJobDraft, setExternalJobDraft] = useState({ source: 'linkedin', title: '', company: '', location: '', applicationUrl: '', employerApplicationUrl: '', description: '' });
 
   // Modals state
   const [selectedJobForModal, setSelectedJobForModal] = useState<Job | null>(null);
@@ -80,6 +85,10 @@ export default function JobsPage() {
 
   useEffect(() => {
     fetchJobs();
+    api.get('/candidate/preferences').then((preferences: any) => setExternalSearch({
+      roles: Array.isArray(preferences?.targetRoles) ? preferences.targetRoles : [],
+      locations: Array.isArray(preferences?.preferredLocations) ? preferences.preferredLocations : [],
+    })).catch(() => undefined);
   }, []);
 
   // Utility to run smooth realistic animation before or during async work
@@ -125,7 +134,7 @@ export default function JobsPage() {
       // Step 4: Finish
       let resultText = '';
       if (apiResult?.data?.overallScore !== undefined) {
-        resultText = `Score: ${apiResult.data.overallScore}% • Recommendation: ${apiResult.data.recommendation} • Matched ${apiResult.data.matchedSkills?.length || 0} required skills`;
+        resultText = `Resume keyword coverage: ${apiResult.data.overallScore}% • Matched ${apiResult.data.matchedSkills?.length || 0} listed skills`;
       } else if (apiResult?.message) {
         resultText = apiResult.message;
       } else {
@@ -151,13 +160,13 @@ export default function JobsPage() {
   const triggerDiscovery = async () => {
     setDiscovering(true);
     try {
-      await executeWithRealisticProgress({
+      const queuedResponse: any = await executeWithRealisticProgress({
         title: 'Multi-Source Job Discovery',
-        subtitle: 'Ingesting live vacancies from LinkedIn, Remotive, Jobicy, Arbeitnow, and Naukri',
+        subtitle: 'Querying supported public job feeds using your saved profile and preferences',
         icon: '🔍',
         steps: [
-          'Connecting to LinkedIn, Remotive, Jobicy & Arbeitnow live APIs...',
-          'Filtering vacancies by candidate preferences and target tech roles...',
+          'Querying Remotive, Jobicy, and Arbeitnow public feeds...',
+          'Using available profile skills and saved preferences to find relevant roles...',
           'Parsing tech stack requirements and deduplicating cross-platform jobs...',
           'Saving candidate-eligible vacancies to database...',
         ],
@@ -165,8 +174,35 @@ export default function JobsPage() {
           return await api.post('/discovery/trigger');
         },
       });
-      fetchJobs();
-      success('Multi-source discovery synchronized live job boards successfully.', 'Discovery Complete');
+      const queued = queuedResponse?.data || queuedResponse;
+      if (!queued?.jobId) throw new Error('The discovery task was not queued successfully.');
+      info('Searching the connected job feeds. This may take a few minutes.', 'Discovery Running');
+      for (let attempt = 0; attempt < 180; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        let statusResponse: any;
+        try {
+          statusResponse = await api.get(`/discovery/${encodeURIComponent(queued.jobId)}`);
+        } catch (error: any) {
+          toastError(error?.response?.data?.message || error?.message || 'Could not check discovery progress.');
+          return;
+        }
+        const status = statusResponse?.data || statusResponse;
+        if (status.state === 'completed') {
+          await fetchJobs();
+          if (!Object.keys(status.result?.sourceResults || {}).length && status.result?.sourceErrors?.length) {
+            toastError(`All job feeds failed. ${status.result.sourceErrors[0].message}`, 'Discovery Failed');
+            return;
+          }
+          success(`Discovery finished. ${status.result?.ingested ?? 0} new jobs were added.`, 'Discovery Complete');
+          return;
+        }
+        if (status.state === 'failed') {
+          toastError(status.failedReason || 'The discovery task failed.');
+          return;
+        }
+      }
+      await fetchJobs();
+      info('Discovery is still running. Refresh the job list in a moment.', 'Discovery Taking Longer');
     } catch {
       // Handled in utility
     } finally {
@@ -174,24 +210,40 @@ export default function JobsPage() {
     }
   };
 
+  const saveExternalJob = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setSavingExternalJob(true);
+    try {
+      await api.post('/jobs/external', externalJobDraft);
+      await fetchJobs();
+      setShowExternalImport(false);
+      setExternalJobDraft({ source: 'linkedin', title: '', company: '', location: '', applicationUrl: '', employerApplicationUrl: '', description: '' });
+      success('Listing saved and scored against your resume.', 'Job Added');
+    } catch (error: any) {
+      toastError(error?.response?.data?.message || error?.message || 'Could not save this listing.');
+    } finally {
+      setSavingExternalJob(false);
+    }
+  };
+
   const handleAtsMatch = async (job: Job) => {
     setActiveJobId(job.id);
     try {
       await executeWithRealisticProgress({
-        title: 'ATS Semantic Match Calculation',
+        title: 'Resume Keyword Coverage',
         subtitle: `Analyzing fit for ${job.title} at ${job.company}`,
         icon: '📊',
         steps: [
-          'Extracting candidate skills and experience embeddings...',
+          'Reading resume and saved profile skills...',
           'Cross-referencing job requirements and qualifications...',
-          'Running deterministic ATS weighting & keyword gap scoring...',
+          'Checking listed job skills against the uploaded resume text...',
           'Finalizing match score and application recommendation...',
         ],
         apiAction: async () => {
           return await api.post<{ data: any }>(`/matching/${job.id}/calculate`);
         },
       });
-      success(`ATS Match verified for ${job.title}!`, 'Match Ready');
+      success(`Resume keyword coverage calculated for ${job.title}.`, 'Match Ready');
     } catch {
       // Handled
     } finally {
@@ -203,14 +255,14 @@ export default function JobsPage() {
     setActiveJobId(job.id);
     try {
       const res = await executeWithRealisticProgress({
-        title: 'AI Resume Tailoring Engine',
+        title: 'Create Resume Copy',
         subtitle: `Optimizing candidate achievements for ${job.company}`,
         icon: '✨',
         steps: [
           'Analyzing job role responsibilities and required keywords...',
           'Mapping candidate factual experience to employer needs...',
-          'Restructuring summary, core skills and project achievements...',
-          'Computing ATS score boost and persisting tailored version...',
+          'Preserving the uploaded resume text without adding new claims...',
+          'Saving a review copy with the current keyword coverage estimate...',
         ],
         apiAction: async () => {
           return await api.post<{ data?: any; message?: string }>(`/resume-tailoring/${job.id}`);
@@ -223,9 +275,9 @@ export default function JobsPage() {
           jobTitle: job.title,
           company: job.company,
           content: version.content || '',
-          beforeScore: version.metadata?.beforeScore || 64,
-          afterScore: version.metadata?.afterScore || 95,
-          improvement: version.metadata?.improvement || 31,
+          beforeScore: version.metadata?.score ?? 0,
+          afterScore: version.metadata?.score ?? 0,
+          improvement: 0,
           injectedKeywords: version.metadata?.injectedKeywords || [],
           tailoringHighlights: version.metadata?.tailoringHighlights || [],
         };
@@ -234,7 +286,7 @@ export default function JobsPage() {
         setIsTailoredModalOpen(true);
       }
 
-      success('Tailored resume created with verified ATS boost!', 'ATS Optimized Successfully');
+      success('A review copy of your original resume was created without adding claims.', 'Resume Copy Ready');
     } catch {
       // Handled
     } finally {
@@ -257,9 +309,9 @@ export default function JobsPage() {
           jobTitle: job.title,
           company: job.company,
           content: version.content || '',
-          beforeScore: version.metadata?.beforeScore || 64,
-          afterScore: version.metadata?.afterScore || 95,
-          improvement: version.metadata?.improvement || 31,
+          beforeScore: version.metadata?.score ?? 0,
+          afterScore: version.metadata?.score ?? 0,
+          improvement: 0,
           injectedKeywords: version.metadata?.injectedKeywords || [],
           tailoringHighlights: version.metadata?.tailoringHighlights || [],
         };
@@ -282,7 +334,7 @@ export default function JobsPage() {
         subtitle: `Drafting tailored outreach letter for ${job.title}`,
         icon: '📝',
         steps: [
-          'Retrieving candidate verified education and background...',
+          'Reading candidate details saved in your profile...',
           'Aligning job specifics with relevant candidate projects...',
           'Drafting concise, professional application narrative...',
           'Linking cover letter to application record...',
@@ -350,7 +402,7 @@ export default function JobsPage() {
         steps: [
           'Initializing application lifecycle state in database...',
           'Attaching master resume and tailored documents...',
-          'Configuring Autonomous Browser Agent filling instructions...',
+          'Preparing a reviewable application packet...',
           'Readying application in "Applications" tab...',
         ],
         apiAction: async () => {
@@ -367,15 +419,6 @@ export default function JobsPage() {
 
   const getSourceBadge = (source?: string) => {
     const s = (source || '').toLowerCase();
-    if (s.includes('shine')) {
-      return { label: 'Shine', color: 'bg-amber-50 text-amber-800 border-amber-300', icon: '🌟' };
-    }
-    if (s.includes('indeed')) {
-      return { label: 'Indeed', color: 'bg-sky-50 text-sky-800 border-sky-300', icon: '🎯' };
-    }
-    if (s.includes('linkedin')) {
-      return { label: 'LinkedIn', color: 'bg-blue-50 text-blue-700 border-blue-200', icon: '🔗' };
-    }
     if (s.includes('remotive')) {
       return { label: 'Remotive', color: 'bg-indigo-50 text-indigo-700 border-indigo-200', icon: '🌐' };
     }
@@ -385,11 +428,16 @@ export default function JobsPage() {
     if (s.includes('arbeitnow')) {
       return { label: 'Arbeitnow', color: 'bg-teal-50 text-teal-700 border-teal-200', icon: '💼' };
     }
-    if (s.includes('naukri')) {
-      return { label: 'Naukri', color: 'bg-orange-50 text-orange-800 border-orange-200', icon: '🇮🇳' };
-    }
-    return { label: source || 'Verified Partner', color: 'bg-slate-50 text-slate-700 border-slate-200', icon: '📌' };
+    if (s.includes('linkedin')) return { label: 'LinkedIn (added by you)', color: 'bg-blue-50 text-blue-700 border-blue-200', icon: 'in' };
+    if (s.includes('shine')) return { label: 'Shine (added by you)', color: 'bg-orange-50 text-orange-700 border-orange-200', icon: '*' };
+    return { label: source || 'Unknown source', color: 'bg-slate-50 text-slate-700 border-slate-200', icon: '??' };
   };
+
+  const externalKeywords = searchQuery.trim() || externalSearch.roles.join(' ');
+  const externalLocation = externalSearch.locations.join(', ');
+  const linkedinSearchUrl = `https://www.linkedin.com/jobs/search/?keywords=${encodeURIComponent(externalKeywords)}&location=${encodeURIComponent(externalLocation)}`;
+  const shineSearchSlug = `${externalKeywords} ${externalLocation}`.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'jobs';
+  const shineSearchUrl = `https://www.shine.com/job-search/${shineSearchSlug}-jobs`;
 
   const onsiteCount = jobs.filter((j) => (j.workMode || '').toUpperCase() === 'ONSITE').length;
   const hybridCount = jobs.filter((j) => (j.workMode || '').toUpperCase() === 'HYBRID').length;
@@ -405,7 +453,9 @@ export default function JobsPage() {
       job.title.toLowerCase().includes(q) ||
       job.company.toLowerCase().includes(q) ||
       (job.location || '').toLowerCase().includes(q);
-    return matchesMode && matchesSearch;
+    const hasResumeEvidence = typeof job.resumeMatch?.score === 'number' && job.resumeMatch.score > 0;
+    const matchesPreferences = !job.preferenceMatch || (job.preferenceMatch.role && job.preferenceMatch.location && job.preferenceMatch.workMode);
+    return matchesMode && matchesSearch && matchesPreferences && (!resumeMatchesOnly || hasResumeEvidence);
   });
 
   const sortedJobs = [...filteredJobs].sort((a, b) => {
@@ -418,8 +468,8 @@ export default function JobsPage() {
     if (sortBy === 'NEWEST') {
       return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
     }
-    // MATCH: prioritize jobs with more matched skills
-    return (b.requiredSkills?.length || 0) - (a.requiredSkills?.length || 0);
+    // Match score is calculated by the API against this user's uploaded resume.
+    return (b.resumeMatch?.score ?? -1) - (a.resumeMatch?.score ?? -1);
   });
 
   return (
@@ -432,7 +482,7 @@ export default function JobsPage() {
             <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">Discovered Jobs</h1>
           </div>
           <p className="mt-1 text-xs sm:text-sm text-slate-500">
-            Real-time vacancies from LinkedIn, Shine, Indeed, Remotive, Jobicy, and Arbeitnow with On-Site, Hybrid, & Remote filters.
+            Listings from supported public feeds, ranked by keyword coverage against your uploaded resume. Availability depends on each feed.
           </p>
         </div>
         <Button
@@ -444,32 +494,32 @@ export default function JobsPage() {
         </Button>
       </div>
 
-      {/* Multi-Platform Status Indicator */}
-      <div className="bg-gradient-to-r from-blue-50/70 via-indigo-50/60 to-purple-50/50 p-4 rounded-2xl border border-blue-100 flex flex-wrap items-center justify-between gap-3 text-xs">
-        <div className="flex items-center gap-2 text-slate-700 font-semibold">
-          <span>🌐</span> Connected Live Job Portals:
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="px-2.5 py-1 rounded-lg bg-blue-100 text-blue-800 font-bold border border-blue-200 flex items-center gap-1">
-            <span>🔗</span> LinkedIn
-          </span>
-          <span className="px-2.5 py-1 rounded-lg bg-amber-100 text-amber-800 font-bold border border-amber-300 flex items-center gap-1">
-            <span>🌟</span> Shine.com
-          </span>
-          <span className="px-2.5 py-1 rounded-lg bg-sky-100 text-sky-800 font-bold border border-sky-300 flex items-center gap-1">
-            <span>🎯</span> Indeed India
-          </span>
-          <span className="px-2.5 py-1 rounded-lg bg-indigo-100 text-indigo-800 font-bold border border-indigo-200 flex items-center gap-1">
-            <span>🌐</span> Remotive
-          </span>
-          <span className="px-2.5 py-1 rounded-lg bg-purple-100 text-purple-800 font-bold border border-purple-200 flex items-center gap-1">
-            <span>⚡</span> Jobicy
-          </span>
-          <span className="px-2.5 py-1 rounded-lg bg-teal-100 text-teal-800 font-bold border border-teal-200 flex items-center gap-1">
-            <span>💼</span> Arbeitnow
-          </span>
-        </div>
+      <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 text-xs text-slate-700">
+        <strong>Supported public feeds:</strong> Remotive, Jobicy, and Arbeitnow. Discovery is queued when triggered; feed reachability and listing availability can vary.
       </div>
+
+      <section className="bg-white p-4 rounded-2xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div><h2 className="text-sm font-bold text-slate-800">LinkedIn and Shine listings</h2><p className="text-xs text-slate-500 mt-1">Search on the source site, then add a real listing here to score it. Platform rules prevent scraping listings or auto-applying there.</p></div>
+        <div className="flex gap-2">
+          <a href={linkedinSearchUrl} target="_blank" rel="noreferrer" className="px-3 py-2 rounded-lg bg-blue-700 text-white text-xs font-bold">Search LinkedIn ?</a>
+          <a href={shineSearchUrl} target="_blank" rel="noreferrer" className="px-3 py-2 rounded-lg bg-orange-600 text-white text-xs font-bold">Search Shine ?</a>
+          <button onClick={() => setShowExternalImport((shown) => !shown)} className="px-3 py-2 rounded-lg bg-slate-900 text-white text-xs font-bold">Add listing</button>
+        </div>
+      </section>
+
+      {showExternalImport && <form onSubmit={saveExternalJob} className="bg-white p-5 rounded-2xl border border-blue-200 shadow-sm space-y-3">
+        <div><h3 className="font-bold text-slate-900">Add a genuine listing</h3><p className="text-xs text-slate-500 mt-1">Copy the listing details from LinkedIn or Shine. Only the details you provide are saved, then the description is scored against your resume. If the listing links directly to the employer's application portal, add that URL too.</p></div>
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <select required value={externalJobDraft.source} onChange={(event) => setExternalJobDraft({ ...externalJobDraft, source: event.target.value })} className="px-3 py-2 border rounded-lg text-sm"><option value="linkedin">LinkedIn</option><option value="shine">Shine</option></select>
+          <input required minLength={2} placeholder="Job title" value={externalJobDraft.title} onChange={(event) => setExternalJobDraft({ ...externalJobDraft, title: event.target.value })} className="px-3 py-2 border rounded-lg text-sm" />
+          <input required minLength={2} placeholder="Company" value={externalJobDraft.company} onChange={(event) => setExternalJobDraft({ ...externalJobDraft, company: event.target.value })} className="px-3 py-2 border rounded-lg text-sm" />
+          <input placeholder="Location" value={externalJobDraft.location} onChange={(event) => setExternalJobDraft({ ...externalJobDraft, location: event.target.value })} className="px-3 py-2 border rounded-lg text-sm" />
+          <input required type="url" placeholder="Full LinkedIn or Shine listing URL" value={externalJobDraft.applicationUrl} onChange={(event) => setExternalJobDraft({ ...externalJobDraft, applicationUrl: event.target.value })} className="px-3 py-2 border rounded-lg text-sm lg:col-span-2" />
+          <input type="url" placeholder="Employer application URL (optional)" value={externalJobDraft.employerApplicationUrl} onChange={(event) => setExternalJobDraft({ ...externalJobDraft, employerApplicationUrl: event.target.value })} className="px-3 py-2 border rounded-lg text-sm lg:col-span-3" />
+        </div>
+        <textarea required minLength={40} rows={5} placeholder="Paste the actual job description" value={externalJobDraft.description} onChange={(event) => setExternalJobDraft({ ...externalJobDraft, description: event.target.value })} className="w-full px-3 py-2 border rounded-lg text-sm" />
+        <div className="flex justify-end gap-2"><button type="button" onClick={() => setShowExternalImport(false)} className="px-4 py-2 rounded-lg border text-sm">Cancel</button><button disabled={savingExternalJob} className="px-4 py-2 rounded-lg bg-blue-700 text-white text-sm font-bold disabled:opacity-50">{savingExternalJob ? 'Saving...' : 'Save and score'}</button></div>
+      </form>}
 
       {/* Work Mode & Search Filter Bar */}
       <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
@@ -517,8 +567,12 @@ export default function JobsPage() {
           </button>
         </div>
 
-        {/* Search Input & Sort Dropdown */}
+        {/* Resume filter, search and sort */}
         <div className="flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-2 text-xs font-semibold text-slate-700">
+            <input type="checkbox" checked={resumeMatchesOnly} onChange={(e) => setResumeMatchesOnly(e.target.checked)} />
+            Resume matches only
+          </label>
           <div className="relative min-w-[200px] flex-1">
             <input
               type="text"
@@ -565,7 +619,7 @@ export default function JobsPage() {
           </h3>
           <p className="text-xs text-slate-500 max-w-md mx-auto mt-1 mb-5">
             {jobs.length === 0
-              ? 'Click "Trigger Discovery" above to ingest verified jobs matching your preferences.'
+              ? 'Click "Trigger Discovery" to query available public feeds using your profile and saved preferences.'
               : 'Try clearing the search query or switching the work mode filter.'}
           </p>
           {jobs.length === 0 ? (
@@ -577,6 +631,7 @@ export default function JobsPage() {
               onClick={() => {
                 setWorkModeFilter('ALL');
                 setSearchQuery('');
+                setResumeMatchesOnly(false);
               }}
               className="text-xs font-bold text-blue-600 hover:underline"
             >
@@ -597,7 +652,7 @@ export default function JobsPage() {
             const isProcessingThis = activeJobId === job.id;
             const badge = getSourceBadge(job.source);
             const hasCoverLetter = Boolean(generatedCoverLetters[job.id]);
-            const matchPct = Math.min(84 + (skillsList.length % 5) * 3, 97);
+            const matchPct = job.resumeMatch?.score;
 
             return (
               <div
@@ -636,8 +691,10 @@ export default function JobsPage() {
                     </div>
 
                     {/* AI Fit Reason Badge (Audit Section 6) */}
-                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 text-[10px] font-extrabold border border-emerald-200">
-                      <span>✨</span> {matchPct}% Match • Full-Stack & Testing Aligned
+                    <div className="inline-flex flex-col gap-0.5 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 text-[10px] font-extrabold border border-emerald-200">
+                      <span>{matchPct === null || matchPct === undefined ? 'No parsed required skills to score' : `${matchPct}% resume keyword coverage`}</span>
+                      {(job.resumeMatch?.matchedSkills?.length ?? 0) > 0 && <span className="font-medium">Matched: {job.resumeMatch?.matchedSkills?.join(', ')}</span>}
+                      {(job.resumeMatch?.missingSkills?.length ?? 0) > 0 && <span className="font-medium">Missing: {job.resumeMatch?.missingSkills?.join(', ')}</span>}
                     </div>
                   </div>
 
@@ -706,7 +763,7 @@ export default function JobsPage() {
                       onClick={() => handleViewTailoredResume(job)}
                       className="w-full py-1.5 px-3 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-sm"
                     >
-                      <span>📄</span> View Tailored Resume ({tailoredResumesMap[job.id].afterScore}% ATS)
+                      <span>📄</span> View Resume Copy
                     </button>
                   )}
 
@@ -716,14 +773,14 @@ export default function JobsPage() {
                       disabled={isProcessingThis}
                       className="w-full py-2 px-3 rounded-xl border border-slate-200 bg-white hover:bg-slate-100 text-slate-700 text-xs font-semibold shadow-sm transition-all hover:border-slate-300"
                     >
-                      ATS Match
+                      Resume Match
                     </button>
                     <button
                       onClick={() => handleTailorResume(job)}
                       disabled={isProcessingThis}
                       className="w-full py-2 px-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-sm transition-all"
                     >
-                      {tailoredResumesMap[job.id] ? 'Re-Tailor Resume' : 'Tailor Resume'}
+                      {tailoredResumesMap[job.id] ? 'Recreate Resume Copy' : 'Create Resume Copy'}
                     </button>
                   </div>
 

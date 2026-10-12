@@ -77,6 +77,15 @@ export interface Job {
   applicationUrl?: string;
   isActive: boolean;
   createdAt: string;
+  resumeMatch?: {
+    score: number | null;
+    matchedSkills: string[];
+    missingSkills: string[];
+    titleMatches: string[];
+    evidenceSource: string;
+    explanation: string;
+  };
+  preferenceMatch?: { role: boolean; location: boolean; workMode: boolean };
 }
 
 export interface JobMatch {

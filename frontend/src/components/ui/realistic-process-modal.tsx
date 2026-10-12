@@ -12,6 +12,7 @@ interface RealisticProcessModalProps {
   icon?: string;
   onClose?: () => void;
   resultData?: any;
+  resultStatus?: 'success' | 'review' | 'failure';
 }
 
 export function RealisticProcessModal({
@@ -24,6 +25,7 @@ export function RealisticProcessModal({
   icon = "⚡",
   onClose,
   resultData,
+  resultStatus = 'success',
 }: RealisticProcessModalProps) {
   if (!isOpen) return null;
 
@@ -50,13 +52,13 @@ export function RealisticProcessModal({
           {/* Animated Progress Bar */}
           <div>
             <div className="flex justify-between items-center text-xs font-semibold text-slate-600 mb-2">
-              <span>{isCompleted ? "Completed" : "Processing Intelligence Pipeline"}</span>
+              <span>{isCompleted ? (resultStatus === 'success' ? 'Confirmed' : resultStatus === 'review' ? 'Review required' : 'Failed') : 'Working'}</span>
               <span className="text-indigo-600 font-bold">{Math.round(progressPercent)}%</span>
             </div>
             <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden p-0.5 shadow-inner">
               <div
                 className={`h-full rounded-full transition-all duration-300 ${
-                  isCompleted ? "bg-emerald-500" : "shimmer-bar"
+                  !isCompleted ? "shimmer-bar" : resultStatus === 'success' ? "bg-emerald-500" : resultStatus === 'review' ? "bg-amber-500" : "bg-red-500"
                 }`}
                 style={{ width: `${progressPercent}%` }}
               />
@@ -66,7 +68,7 @@ export function RealisticProcessModal({
           {/* Step Sequence Details */}
           <div className="space-y-3 bg-slate-50/70 p-4 rounded-xl border border-slate-100">
             {steps.map((step, idx) => {
-              const isPast = idx < currentStepIndex || isCompleted;
+              const isPast = idx < currentStepIndex && (!isCompleted || resultStatus === 'success');
               const isCurrent = idx === currentStepIndex && !isCompleted;
 
               return (
@@ -76,6 +78,8 @@ export function RealisticProcessModal({
                       <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold text-[10px]">
                         ✓
                       </span>
+                    ) : isCompleted && idx >= currentStepIndex ? (
+                      <span className={`w-5 h-5 rounded-full flex items-center justify-center font-bold text-[10px] ${resultStatus === 'review' ? 'bg-amber-100 text-amber-800' : 'bg-red-100 text-red-700'}`}>{resultStatus === 'review' ? '!' : '×'}</span>
                     ) : isCurrent ? (
                       <span className="w-4 h-4 rounded-full border-2 border-indigo-600 border-t-transparent animate-spin" />
                     ) : (
@@ -100,11 +104,11 @@ export function RealisticProcessModal({
 
           {/* Results Summary if completed */}
           {isCompleted && resultData && (
-            <div className="p-4 rounded-xl bg-emerald-50/80 border border-emerald-200 text-emerald-900 text-xs space-y-1.5 animate-in fade-in">
-              <div className="font-bold flex items-center gap-1.5 text-emerald-800">
-                <span>🎯</span> Result Summary:
+            <div className={`p-4 rounded-xl border text-xs space-y-1.5 animate-in fade-in ${resultStatus === 'success' ? 'bg-emerald-50/80 border-emerald-200 text-emerald-900' : resultStatus === 'review' ? 'bg-amber-50 border-amber-300 text-amber-950' : 'bg-red-50 border-red-200 text-red-900'}`}>
+              <div className={`font-bold flex items-center gap-1.5 ${resultStatus === 'success' ? 'text-emerald-800' : resultStatus === 'review' ? 'text-amber-900' : 'text-red-800'}`}>
+                <span>{resultStatus === 'success' ? '✓' : resultStatus === 'review' ? '!' : '×'}</span> {resultStatus === 'success' ? 'Result Summary:' : resultStatus === 'review' ? 'Action needed:' : 'Submission failed:'}
               </div>
-              <p className="leading-relaxed text-emerald-700">{resultData}</p>
+              <p className={`leading-relaxed ${resultStatus === 'success' ? 'text-emerald-700' : resultStatus === 'review' ? 'text-amber-800' : 'text-red-700'}`}>{resultData}</p>
             </div>
           )}
 

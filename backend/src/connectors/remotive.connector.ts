@@ -15,14 +15,15 @@ export class RemotiveConnector implements JobSourceConnector {
   capabilities(): SourceCapabilities {
     return {
       canSearch: true,
-      canGetDetails: true,
+      canGetDetails: false,
       canDirectApply: false,
       requiresAuth: false,
     };
   }
 
   async searchJobs(criteria: JobSearchCriteria): Promise<DiscoveredJobPayload[]> {
-    const keyword = criteria.keywords && criteria.keywords.length > 0 ? criteria.keywords[0] : 'developer';
+    const keyword = criteria.keywords && criteria.keywords.length > 0 ? criteria.keywords[0] : '';
+    if (!keyword.trim()) return [];
     this.logger.log(`Searching Remotive live jobs for '${keyword}'...`);
 
     const encodedKeyword = encodeURIComponent(keyword);
@@ -51,23 +52,25 @@ export class RemotiveConnector implements JobSourceConnector {
                     .replace(/\s+/g, ' ')
                     .trim();
 
+                  if (!item.id || !item.company_name || !item.title || !item.url || !cleanDesc) return null;
                   return {
                     source: 'Remotive',
-                    sourceJobId: String(item.id || Date.now()),
-                    company: item.company_name || 'Tech Company',
-                    title: item.title || keyword,
-                    location: item.candidate_required_location || 'Remote / Worldwide',
+                    sourceJobId: String(item.id),
+                    company: item.company_name,
+                    title: item.title,
+                    location: item.candidate_required_location || 'Remote',
                     workMode: 'REMOTE',
                     employmentType: item.job_type ? item.job_type.toUpperCase() : 'FULL_TIME',
-                    description: cleanDesc || `${item.title} at ${item.company_name}`,
-                    applicationUrl: item.url || `https://remotive.com/remote-jobs/${item.id}`,
+                    description: cleanDesc,
+                    applicationUrl: item.url,
                     applicationMethod: 'DIRECT_EMPLOYER_PORTAL',
-                    requiredSkills: Array.isArray(item.tags) ? item.tags : [keyword],
-                    postedAt: item.publication_date ? new Date(item.publication_date) : new Date(),
+                    requiredSkills: [],
+                    preferredSkills: Array.isArray(item.tags) ? item.tags : [],
+                    postedAt: item.publication_date ? new Date(item.publication_date) : undefined,
                   };
-                });
+                }).filter(Boolean) as DiscoveredJobPayload[];
 
-                this.logger.log(`Discovered ${jobs.length} verified jobs from Remotive.`);
+                this.logger.log(`Discovered ${jobs.length} source listings from Remotive.`);
                 resolve(jobs);
               } catch (e) {
                 this.logger.warn('Failed to parse Remotive response', e);

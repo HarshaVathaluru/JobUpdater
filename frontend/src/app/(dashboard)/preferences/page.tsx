@@ -242,44 +242,13 @@ export default function PreferencesPage() {
         </CardBody>
       </Card>
 
-      {/* Connected Job Sources & Discovery Status (Audit Section 102 & 295) */}
       <Card className="rounded-3xl border border-slate-200/80 shadow-sm overflow-hidden">
-        <CardHeader className="bg-slate-50/80 border-b border-slate-100 p-6 flex items-center justify-between">
-          <div>
-            <h3 className="text-base font-bold text-slate-900">Connected Job Sources & Connectors</h3>
-            <p className="text-xs text-slate-500">Live connectors automatically queried by the background discovery engine</p>
-          </div>
-          <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-200">
-            6 Connectors Online
-          </span>
+        <CardHeader className="bg-slate-50/80 border-b border-slate-100 p-6">
+          <h3 className="text-base font-bold text-slate-900">Public job feeds used by discovery</h3>
+          <p className="text-xs text-slate-500">These feeds are queried when you trigger discovery. Their availability can change; this list does not mean a feed is currently reachable.</p>
         </CardHeader>
-        <CardBody className="p-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-            {[
-              { name: 'LinkedIn Jobs (India & Global)', type: 'Hybrid / Onsite / Remote', status: 'Connected', icon: '🔗', count: '72+ Jobs' },
-              { name: 'Shine.com (India Tech Hubs)', type: 'Verified Onsite BLR/HYD/PUN', status: 'Connected', icon: '🏢', count: '42+ Jobs' },
-              { name: 'Indeed (India Engineering)', type: 'Onsite & Hybrid Openings', status: 'Connected', icon: '💼', count: '35+ Jobs' },
-              { name: 'Remotive Global Tech', type: '100% Remote Worldwide', status: 'Connected', icon: '🌐', count: '25+ Jobs' },
-              { name: 'Jobicy Verified API', type: 'Remote Tech & Engineering', status: 'Connected', icon: '⚡', count: '18+ Jobs' },
-              { name: 'Arbeitnow Tech Feeds', type: 'Modern Software Roles', status: 'Connected', icon: '🚀', count: '12+ Jobs' },
-            ].map((conn, i) => (
-              <div key={i} className="flex items-center justify-between p-3.5 rounded-2xl bg-slate-50/80 border border-slate-100">
-                <div className="flex items-center gap-3">
-                  <span className="text-xl">{conn.icon}</span>
-                  <div>
-                    <p className="text-xs font-bold text-slate-900">{conn.name}</p>
-                    <p className="text-[11px] text-slate-500">{conn.type}</p>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> {conn.status}
-                  </span>
-                  <p className="text-[10px] text-slate-400 mt-0.5">{conn.count}</p>
-                </div>
-              </div>
-            ))}
-          </div>
+        <CardBody className="p-6 grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+          {['Remotive', 'Jobicy', 'Arbeitnow'].map((source) => <div key={source} className="p-3 rounded-xl bg-slate-50 border">{source}<p className="text-xs text-slate-500 mt-1">Public feed</p></div>)}
         </CardBody>
       </Card>
     </div>

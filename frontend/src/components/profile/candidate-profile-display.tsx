@@ -66,7 +66,7 @@ export function CandidateProfileDisplay({ refreshTrigger }: { refreshTrigger: nu
           <div className="space-y-1">
             <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full bg-white/20 text-xs font-medium backdrop-blur-sm">
               <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-              Verified Profile Identity
+              Parsed from uploaded resume
             </div>
             <h2 className="text-2xl md:text-3xl font-extrabold tracking-tight">
               {profile.fullName || 'Candidate Name'}

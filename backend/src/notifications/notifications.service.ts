@@ -8,7 +8,7 @@ export interface ApplicationSubmissionEmailData {
   jobTitle: string;
   company: string;
   location?: string;
-  confirmationId: string;
+  confirmationId?: string;
   applicationUrl?: string;
   submittedAt: Date;
 }
@@ -17,13 +17,9 @@ export interface ApplicationSubmissionEmailData {
 export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
   private transporter: nodemailer.Transporter | null = null;
-  private etherealAccount: any = null;
+  constructor(private readonly configService: ConfigService) {}
 
-  constructor(private readonly configService: ConfigService) {
-    this.initTransporter();
-  }
-
-  private async initTransporter() {
+  private initTransporter(): boolean {
     const host = this.configService.get<string>('SMTP_HOST');
     const port = Number(this.configService.get<number>('SMTP_PORT')) || 587;
     const user = this.configService.get<string>('SMTP_USER');
@@ -37,45 +33,30 @@ export class NotificationsService {
         auth: { user, pass },
       });
       this.logger.log(`SMTP Mailer initialized using host ${host}`);
+      return true;
     } else {
-      try {
-        const testAccount = await nodemailer.createTestAccount();
-        this.etherealAccount = testAccount;
-        this.transporter = nodemailer.createTransport({
-          host: 'smtp.ethereal.email',
-          port: 587,
-          secure: false,
-          auth: {
-            user: testAccount.user,
-            pass: testAccount.pass,
-          },
-        });
-        this.logger.log(`Using Ethereal Mailer for development/testing: ${testAccount.user}`);
-      } catch (err) {
-        this.logger.warn('Could not initialize Ethereal test account, using JSON fallback transporter', err);
-        this.transporter = nodemailer.createTransport({
-          jsonTransport: true,
-        });
-      }
+      this.transporter = null;
+      this.logger.warn('SMTP is not configured; no email will be sent.');
+      return false;
     }
   }
 
-  async sendApplicationSubmissionConfirmation(data: ApplicationSubmissionEmailData): Promise<{ sent: boolean; messageId?: string; previewUrl?: string }> {
-    if (!this.transporter) {
-      await this.initTransporter();
+  async sendApplicationSubmissionConfirmation(data: ApplicationSubmissionEmailData): Promise<{ sent: boolean; messageId?: string }> {
+    if (!this.transporter && !this.initTransporter()) {
+      return { sent: false };
     }
 
     const htmlContent = `
       <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 620px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background: #ffffff;">
         <div style="background: linear-gradient(135deg, #4f46e5 0%, #6366f1 100%); padding: 24px; border-radius: 10px; text-align: center; color: white;">
-          <h2 style="margin: 0; font-size: 22px; font-weight: 700;">Job Application Submitted Successfully!</h2>
-          <p style="margin: 8px 0 0 0; opacity: 0.9; font-size: 14px;">Autonomous Recruitment Dispatch Confirmation</p>
+          <h2 style="margin: 0; font-size: 22px; font-weight: 700;">Employer Portal Confirmation Detected</h2>
+          <p style="margin: 8px 0 0 0; opacity: 0.9; font-size: 14px;">A confirmation message was detected on the employer website.</p>
         </div>
         
         <div style="padding: 24px 8px 12px 8px;">
           <p style="font-size: 15px; color: #334155;">Hello <strong>${data.candidateName || 'Candidate'}</strong>,</p>
           <p style="font-size: 14px; color: #475569; line-height: 1.6;">
-            Your application for <strong>${data.jobTitle}</strong> at <strong>${data.company}</strong> has been confirmed and submitted through our recruitment gateway.
+            The employer portal displayed a confirmation for your application to <strong>${data.jobTitle}</strong> at <strong>${data.company}</strong>.
           </p>
           
           <table style="width: 100%; border-collapse: collapse; margin: 24px 0; background: #f8fafc; border-radius: 8px; overflow: hidden; border: 1px solid #e2e8f0;">
@@ -93,8 +74,8 @@ export class NotificationsService {
               <td style="padding: 12px 16px; color: #0f172a; font-size: 14px;">${data.location}</td>
             </tr>` : ''}
             <tr style="border-bottom: 1px solid #e2e8f0;">
-              <td style="padding: 12px 16px; color: #64748b; font-size: 13px;">Gateway Reference</td>
-              <td style="padding: 12px 16px; color: #059669; font-family: monospace; font-size: 14px; font-weight: 700;">${data.confirmationId}</td>
+              <td style="padding: 12px 16px; color: #64748b; font-size: 13px;">Reference</td>
+              <td style="padding: 12px 16px; color: #059669; font-family: monospace; font-size: 14px; font-weight: 700;">${data.confirmationId || 'Portal confirmation detected'}</td>
             </tr>
             <tr>
               <td style="padding: 12px 16px; color: #64748b; font-size: 13px;">Submitted Date</td>
@@ -124,22 +105,17 @@ export class NotificationsService {
     `;
 
     try {
-      const fromAddress = this.configService.get<string>('SMTP_FROM') || '"AutoApply Agent" <notifications@autoapplyforjob.com>';
+      const fromAddress = this.configService.get<string>('SMTP_FROM') || this.configService.get<string>('SMTP_USER')!;
       const info = await this.transporter!.sendMail({
         from: fromAddress,
         to: data.candidateEmail,
-        subject: `Application Submitted: ${data.jobTitle} at ${data.company} [${data.confirmationId}]`,
-        text: `Your application for ${data.jobTitle} at ${data.company} was submitted successfully! Confirmation ID: ${data.confirmationId}`,
+        subject: `Portal confirmation detected: ${data.jobTitle} at ${data.company}`,
+        text: `The employer portal displayed a submission confirmation for ${data.jobTitle} at ${data.company}.`,
         html: htmlContent,
       });
 
-      const previewUrl = nodemailer.getTestMessageUrl(info) || undefined;
       this.logger.log(`Submission confirmation email sent to ${data.candidateEmail}. Message ID: ${info.messageId}`);
-      if (previewUrl) {
-        this.logger.log(`Email Preview URL: ${previewUrl}`);
-      }
-
-      return { sent: true, messageId: info.messageId, previewUrl };
+      return { sent: true, messageId: info.messageId };
     } catch (err: any) {
       this.logger.error(`Failed to send submission email to ${data.candidateEmail}`, err.stack || err.message);
       return { sent: false };

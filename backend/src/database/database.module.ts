@@ -14,9 +14,9 @@ import { ConfigService } from '@nestjs/config';
             url: databaseUrl,
             ssl: { rejectUnauthorized: false },
             autoLoadEntities: true,
-            synchronize: true,
+            synchronize: false,
             migrations: [__dirname + '/migrations/*{.ts,.js}'],
-            migrationsRun: false,
+            migrationsRun: true,
           };
         }
         return {
@@ -29,7 +29,7 @@ import { ConfigService } from '@nestjs/config';
           autoLoadEntities: true,
           synchronize: false,
           migrations: [__dirname + '/migrations/*{.ts,.js}'],
-          migrationsRun: false,
+          migrationsRun: true,
         };
       },
     }),

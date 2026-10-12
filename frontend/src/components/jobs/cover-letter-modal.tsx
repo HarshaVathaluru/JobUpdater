@@ -57,10 +57,10 @@ export function CoverLetterModal({
             <div className="flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-indigo-600 animate-pulse"></span>
               <span className="text-xs font-bold uppercase tracking-wider text-indigo-700 bg-indigo-50 px-2.5 py-0.5 rounded-full border border-indigo-200/60">
-                AI Cover Letter Studio
+                Cover letter draft
               </span>
               <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-                Factual Grounding Active
+                Review before sending
               </span>
             </div>
             <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight leading-snug">
@@ -135,7 +135,7 @@ export function CoverLetterModal({
         <div className="p-4 sm:p-5 border-t border-slate-100 bg-white flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-xs text-slate-500 font-medium">
             <span>🛡️</span>
-            <span>Grounded in verified experience at Zenitude.ai & Mphasis</span>
+            <span>Drafted from the profile data currently saved in your account. Review every claim before sending.</span>
           </div>
 
           <div className="flex items-center gap-2">

@@ -86,12 +86,12 @@ export class ResumeService {
     profile.phone = structuredData.phone || profile.phone || '';
     profile.location = structuredData.location || profile.location || '';
     profile.summary = structuredData.summary || profile.summary || '';
-    profile.skills = Array.isArray(structuredData.skills) ? structuredData.skills : [];
-    profile.experience = Array.isArray(structuredData.experience) ? structuredData.experience : [];
-    profile.education = Array.isArray(structuredData.education) ? structuredData.education : [];
-    profile.projects = Array.isArray(structuredData.projects) ? structuredData.projects : [];
-    profile.certifications = Array.isArray(structuredData.certifications) ? structuredData.certifications : [];
-    profile.achievements = Array.isArray(structuredData.achievements) ? structuredData.achievements : [];
+    profile.skills = Array.isArray(structuredData.skills) && structuredData.skills.length ? structuredData.skills : profile.skills || [];
+    profile.experience = Array.isArray(structuredData.experience) && structuredData.experience.length ? structuredData.experience : profile.experience || [];
+    profile.education = Array.isArray(structuredData.education) && structuredData.education.length ? structuredData.education : profile.education || [];
+    profile.projects = Array.isArray(structuredData.projects) && structuredData.projects.length ? structuredData.projects : profile.projects || [];
+    profile.certifications = Array.isArray(structuredData.certifications) && structuredData.certifications.length ? structuredData.certifications : profile.certifications || [];
+    profile.achievements = Array.isArray(structuredData.achievements) && structuredData.achievements.length ? structuredData.achievements : profile.achievements || [];
 
     await this.profileRepo.save(profile);
 
@@ -150,7 +150,7 @@ export class ResumeService {
     const emailMatch = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
     const phoneMatch = text.match(/(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/);
     const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
-    const fullName = lines.length > 0 ? lines[0] : 'Candidate';
+    const fullName = lines.length > 0 ? lines[0] : '';
 
     const getSection = (startRegex: RegExp, endRegex: RegExp) => {
       const sMatch = text.search(startRegex);
@@ -203,10 +203,14 @@ export class ResumeService {
       if (line.includes('|') && (line.includes('Present') || line.match(/\d{4}/))) {
         if (curExp) experience.push(curExp);
         const [title, rest] = line.split('|').map(s => s.trim());
+        if (!title) {
+          curExp = null;
+          continue;
+        }
         const datesMatch = rest.match(/([A-Za-z]{3}\s*\d{4})\s*[–-]\s*(Present|[A-Za-z]{3}\s*\d{4})/i);
         const company = rest.replace(/([A-Za-z]{3}\s*\d{4})\s*[–-]\s*(Present|[A-Za-z]{3}\s*\d{4})/i, '').trim();
         curExp = {
-          title: title || 'Software Engineer',
+          title,
           company: company || rest,
           startDate: datesMatch ? datesMatch[1] : '',
           endDate: datesMatch ? datesMatch[2] : (rest.includes('Present') ? 'Present' : ''),
@@ -255,7 +259,7 @@ export class ResumeService {
       fullName,
       email: emailMatch ? emailMatch[0] : '',
       phone: phoneMatch ? phoneMatch[0] : '',
-      location: text.includes('Andhra Pradesh, India') ? 'Andhra Pradesh, India' : '',
+      location: '',
       summary: summary || lines.slice(1, 4).join(' '),
       skills,
       experience,

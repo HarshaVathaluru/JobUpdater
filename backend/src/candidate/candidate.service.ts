@@ -43,4 +43,14 @@ export class CandidateService {
   async getProfile(userId: string): Promise<CandidateProfileEntity | null> {
     return this.profileRepo.findOne({ where: { userId } });
   }
+
+  async updateProfile(userId: string, data: Partial<CandidateProfileEntity>): Promise<CandidateProfileEntity> {
+    let profile = await this.profileRepo.findOne({ where: { userId } });
+    if (!profile) profile = this.profileRepo.create({ id: uuidv4(), userId, fullName: '', email: '' });
+    const editableFields: Array<keyof CandidateProfileEntity> = ['fullName', 'email', 'phone', 'location', 'summary', 'skills', 'experience', 'education', 'projects', 'certifications', 'achievements'];
+    for (const field of editableFields) {
+      if (data[field] !== undefined) (profile as any)[field] = data[field];
+    }
+    return this.profileRepo.save(profile);
+  }
 }

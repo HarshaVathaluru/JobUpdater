@@ -1,4 +1,4 @@
-﻿import { Controller, Get, Post, Body, UseGuards } from '@nestjs/common';
+﻿import { Controller, Get, Post, Put, Body, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { CandidateService } from './candidate.service';
@@ -21,5 +21,10 @@ export class CandidateController {
   @Get('profile')
   async getProfile(@CurrentUser() user: any) {
     return this.candidateService.getProfile(user.id);
+  }
+
+  @Put('profile')
+  async updateProfile(@CurrentUser() user: any, @Body() data: any) {
+    return this.candidateService.updateProfile(user.id, data);
   }
 }

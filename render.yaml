@@ -19,7 +19,10 @@ services:
           name: auto-apply-db
           property: connectionString
       - key: REDIS_URL
-        value: rediss://default:gQAAAAAAAvruAAIgcDE5ODJiYTliNDAzMDk0YzVmODAyYjgwZTMxN2YyZGRkNA@coherent-ant-195310.upstash.io:6379
+        fromService:
+          type: keyvalue
+          name: auto-apply-redis
+          property: connectionString
       - key: JWT_SECRET
         generateValue: true
       - key: JWT_EXPIRATION
@@ -28,6 +31,18 @@ services:
         sync: false
       - key: STORAGE_PATH
         value: ./uploads
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: 587
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      - key: BROWSER_EXECUTABLE_PATH
+        sync: false
 
   # ==========================================
   # 2. Next.js Frontend Web Service
@@ -44,6 +59,14 @@ services:
         value: production
       - key: NEXT_PUBLIC_API_URL
         value: https://auto-apply-backend-8is9.onrender.com/api
+
+  # BullMQ requires Redis for discovery and other background jobs.
+  - type: keyvalue
+    name: auto-apply-redis
+    plan: 256mb
+    maxmemoryPolicy: noeviction
+    persistenceMode: off
+    ipAllowList: []
 
 databases:
   # ==========================================

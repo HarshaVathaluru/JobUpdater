@@ -45,7 +45,7 @@ export default function Login() {
           Welcome back
         </h2>
         <p className="text-xs text-slate-500 font-medium">
-          Sign in to access your autonomous job matches and application tracker
+          Sign in to access your resume matched jobs and application tracker
         </p>
       </div>
 

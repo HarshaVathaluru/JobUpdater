@@ -15,6 +15,9 @@ export class JobEntity {
   @Column({ nullable: true })
   sourceJobId: string;
 
+  @Column('uuid', { nullable: true })
+  candidateOwnerId: string;
+
   @Column()
   company: string;
 
@@ -87,5 +90,4 @@ export class JobEntity {
   @UpdateDateColumn()
   updatedAt: Date;
 }
-
 

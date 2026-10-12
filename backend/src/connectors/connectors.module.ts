@@ -5,10 +5,6 @@ import { DiscoveryProcessor } from './discovery.processor';
 import { DiscoveryController } from './discovery.controller';
 import { JobsModule } from '../jobs/jobs.module';
 import { CandidateModule } from '../candidate/candidate.module';
-import { LinkedInConnector } from './linkedin.connector';
-import { NaukriConnector } from './naukri.connector';
-import { ShineConnector } from './shine.connector';
-import { IndeedConnector } from './indeed.connector';
 import { RemotiveConnector } from './remotive.connector';
 import { JobicyConnector } from './jobicy.connector';
 import { ArbeitnowConnector } from './arbeitnow.connector';
@@ -27,20 +23,12 @@ import { QueueModule } from '../queue/queue.module';
   providers: [
     DiscoveryService,
     DiscoveryProcessor,
-    LinkedInConnector,
-    NaukriConnector,
-    ShineConnector,
-    IndeedConnector,
     RemotiveConnector,
     JobicyConnector,
     ArbeitnowConnector,
   ],
   exports: [
     DiscoveryService,
-    LinkedInConnector,
-    NaukriConnector,
-    ShineConnector,
-    IndeedConnector,
     RemotiveConnector,
     JobicyConnector,
     ArbeitnowConnector,

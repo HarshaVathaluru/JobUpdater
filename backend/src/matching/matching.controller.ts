@@ -18,7 +18,6 @@ export class MatchingController {
   @Post(':jobId/calculate')
   async calculateMatch(@Param('jobId') jobId: string, @CurrentUser() user: UserEntity) {
     const match = await this.matchingService.calculateMatch(jobId, user.id);
-    return { data: match, message: 'ATS match calculated successfully' };
+    return { data: match, message: 'Resume keyword coverage calculated successfully' };
   }
 }
-

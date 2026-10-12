@@ -2,10 +2,6 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
 import { JobsService } from '../jobs/jobs.service';
-import { LinkedInConnector } from './linkedin.connector';
-import { NaukriConnector } from './naukri.connector';
-import { ShineConnector } from './shine.connector';
-import { IndeedConnector } from './indeed.connector';
 import { RemotiveConnector } from './remotive.connector';
 import { JobicyConnector } from './jobicy.connector';
 import { ArbeitnowConnector } from './arbeitnow.connector';
@@ -17,144 +13,59 @@ export class DiscoveryProcessor extends WorkerHost {
 
   constructor(
     private readonly jobsService: JobsService,
-    private readonly linkedInConnector: LinkedInConnector,
-    private readonly naukriConnector: NaukriConnector,
-    private readonly shineConnector: ShineConnector,
-    private readonly indeedConnector: IndeedConnector,
     private readonly remotiveConnector: RemotiveConnector,
     private readonly jobicyConnector: JobicyConnector,
     private readonly arbeitnowConnector: ArbeitnowConnector,
     private readonly candidateService: CandidateService,
-  ) {
-    super();
-  }
+  ) { super(); }
 
-  async process(job: Job<any, any, string>): Promise<any> {
-    this.logger.log(`Processing discovery job ${job.id} for user ${job.data?.userId || 'system'}`);
+  async process(job: Job<{ userId?: string }>): Promise<any> {
+    const userId = job.data?.userId;
+    if (!userId) return { ingested: 0, reason: 'Candidate-specific discovery requires a user profile.' };
 
-    let keywords: string[] = [];
-    let locations: string[] = [];
-
-    // Check candidate preferences and profile
-    if (job.data?.userId) {
-      const preferences = await this.candidateService.getPreferences(job.data.userId);
-      if (preferences && preferences.targetRoles && preferences.targetRoles.length > 0) {
-        keywords = preferences.targetRoles;
-        locations = preferences.preferredLocations || [];
-      } else {
-        const profile = await this.candidateService.getProfile(job.data.userId);
-        if (profile) {
-          if (profile.skills && profile.skills.length > 0) {
-            keywords = ['Software Developer', 'Full Stack Developer', 'QA Automation Engineer', 'Java Developer'];
-          }
-          if (profile.location) {
-            locations = [profile.location, 'Bengaluru', 'Hyderabad', 'Pune'];
-          }
-        }
-      }
+    const [preferences, profile] = await Promise.all([
+      this.candidateService.getPreferences(userId),
+      this.candidateService.getProfile(userId),
+    ]);
+    const roles = (preferences?.targetRoles || []).map((value) => value.trim()).filter(Boolean);
+    if (!roles.length) {
+      const experienceTitles = (profile?.experience || []).map((item: any) => item?.title).filter(Boolean);
+      roles.push(...experienceTitles);
+    }
+    if (!roles.length) {
+      const profileSkills = Array.isArray(profile?.skills) ? profile.skills : [];
+      roles.push(...profileSkills.slice(0, 5));
+    }
+    const keywords = [...new Set(roles)].slice(0, 8);
+    if (!keywords.length) {
+      return { ingested: 0, reason: 'Add target roles or upload a resume with skills or work history before discovering jobs.' };
     }
 
-    if (keywords.length === 0) {
-      keywords = [
-        'Software Developer',
-        'Full Stack Developer',
-        'QA Automation Engineer',
-        'Java Developer',
-        'Automation Tester',
-      ];
-    }
-    if (locations.length === 0) {
-      locations = ['Bengaluru', 'Hyderabad', 'Pune', 'India'];
-    }
-
-    this.logger.log(
-      `Executing multi-source discovery across LinkedIn, Shine, Indeed, Remotive, Jobicy, Arbeitnow with keywords: [${keywords.join(', ')}]`,
-    );
+    const locations = [...new Set([
+      ...(preferences?.preferredLocations || []),
+      ...(!preferences?.preferredLocations?.length && profile?.location ? [profile.location] : []),
+    ].map((value) => value.trim()).filter(Boolean))];
+    const connectors = [this.remotiveConnector, this.jobicyConnector, this.arbeitnowConnector];
+    this.logger.log(`Searching public job feeds for user ${userId} using ${keywords.length} profile-derived queries.`);
 
     let totalIngested = 0;
-
-    for (const kw of keywords) {
-      for (const loc of locations.slice(0, 3)) {
-        const criteria = { keywords: [kw], locations: [loc] };
-
-        // 1. LinkedIn (Onsite, Hybrid, Remote)
+    const sourceResults: Record<string, { scanned: number; added: number }> = {};
+    const sourceErrors: Array<{ source: string; query: string; message: string }> = [];
+    for (const keyword of keywords) {
+      for (const connector of connectors) {
         try {
-          const rawLinkedInJobs = await this.linkedInConnector.searchJobs(criteria);
-          if (rawLinkedInJobs.length > 0) {
-            const count = await this.jobsService.ingestJobs(rawLinkedInJobs);
-            totalIngested += count;
-            this.logger.log(`Ingested ${count} jobs from LinkedIn for "${kw}" in "${loc}"`);
-          }
-        } catch (err) {
-          this.logger.warn(`LinkedIn discovery error for "${kw}"`, err);
-        }
-
-        // 2. Shine.com (Verified Onsite Indian tech hubs)
-        try {
-          const rawShineJobs = await this.shineConnector.searchJobs(criteria);
-          if (rawShineJobs.length > 0) {
-            const count = await this.jobsService.ingestJobs(rawShineJobs);
-            totalIngested += count;
-            this.logger.log(`Ingested ${count} genuine onsite jobs from Shine for "${kw}" in "${loc}"`);
-          }
-        } catch (err) {
-          this.logger.warn(`Shine discovery error for "${kw}"`, err);
-        }
-
-        // 3. Indeed India
-        try {
-          const rawIndeedJobs = await this.indeedConnector.searchJobs(criteria);
-          if (rawIndeedJobs.length > 0) {
-            const count = await this.jobsService.ingestJobs(rawIndeedJobs);
-            totalIngested += count;
-            this.logger.log(`Ingested ${count} jobs from Indeed for "${kw}" in "${loc}"`);
-          }
-        } catch (err) {
-          this.logger.warn(`Indeed discovery error for "${kw}"`, err);
-        }
-      }
-
-      // Global feeds per keyword
-      const globalCriteria = { keywords: [kw], locations };
-
-      // 4. Remotive
-      try {
-        const rawRemotiveJobs = await this.remotiveConnector.searchJobs(globalCriteria);
-        if (rawRemotiveJobs.length > 0) {
-          const count = await this.jobsService.ingestJobs(rawRemotiveJobs);
+          const found = await connector.searchJobs({ keywords: [keyword], locations });
+          const count = await this.jobsService.ingestJobs(found);
           totalIngested += count;
-          this.logger.log(`Ingested ${count} jobs from Remotive for "${kw}"`);
+          const current = sourceResults[connector.name] || { scanned: 0, added: 0 };
+          sourceResults[connector.name] = { scanned: current.scanned + found.length, added: current.added + count };
+          this.logger.log(`${connector.name} returned ${found.length} source records; ${count} new jobs saved for query "${keyword}".`);
+        } catch (error) {
+          this.logger.warn(`${connector.name} search failed for query "${keyword}"`, error);
+          sourceErrors.push({ source: connector.name, query: keyword, message: 'Feed request failed.' });
         }
-      } catch (err) {
-        this.logger.warn(`Remotive discovery error for "${kw}"`, err);
-      }
-
-      // 5. Jobicy
-      try {
-        const rawJobicyJobs = await this.jobicyConnector.searchJobs(globalCriteria);
-        if (rawJobicyJobs.length > 0) {
-          const count = await this.jobsService.ingestJobs(rawJobicyJobs);
-          totalIngested += count;
-          this.logger.log(`Ingested ${count} jobs from Jobicy for "${kw}"`);
-        }
-      } catch (err) {
-        this.logger.warn(`Jobicy discovery error for "${kw}"`, err);
-      }
-
-      // 6. Arbeitnow
-      try {
-        const rawArbeitnowJobs = await this.arbeitnowConnector.searchJobs(globalCriteria);
-        if (rawArbeitnowJobs.length > 0) {
-          const count = await this.jobsService.ingestJobs(rawArbeitnowJobs);
-          totalIngested += count;
-          this.logger.log(`Ingested ${count} jobs from Arbeitnow for "${kw}"`);
-        }
-      } catch (err) {
-        this.logger.warn(`Arbeitnow discovery error for "${kw}"`, err);
       }
     }
-
-    this.logger.log(`Discovery run completed. Total new jobs ingested: ${totalIngested}`);
-    return { ingested: totalIngested };
+    return { ingested: totalIngested, sourceResults, sourceErrors };
   }
 }
