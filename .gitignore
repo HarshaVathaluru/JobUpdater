@@ -49,3 +49,4 @@ playwright-report/
 *.sqlite3
 *.db
 redis/
+browser-profiles/

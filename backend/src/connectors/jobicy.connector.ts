@@ -60,6 +60,10 @@ export class JobicyConnector implements JobSourceConnector {
                     .trim();
 
                   if (!item.id || !item.companyName || !item.jobTitle || !item.url || !cleanDesc) return null;
+                  const pubDate = item.pubDate ? new Date(item.pubDate) : undefined;
+                  if (pubDate && (Date.now() - pubDate.getTime() > 14 * 24 * 3600 * 1000)) {
+                    return null; // Skip stale postings older than 14 days
+                  }
                   return {
                     source: 'Jobicy',
                     sourceJobId: String(item.id),

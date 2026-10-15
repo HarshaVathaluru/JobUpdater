@@ -11,8 +11,10 @@ import { JobMatchEntity } from '../matching/entities/job-match.entity';
 import { ResumeEntity } from '../resume/entities/resume.entity';
 import { JobEntity } from '../jobs/entities/job.entity';
 import { CandidateProfileEntity } from '../candidate/entities/candidate-profile.entity';
+import { CandidatePreferenceEntity } from '../candidate/entities/candidate-preference.entity';
 import { BrowserService } from '../browser/browser.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { scoreResumeAgainstJob } from '../matching/resume-match';
 
 @Injectable()
 export class SubmissionService {
@@ -33,6 +35,8 @@ export class SubmissionService {
     private readonly jobRepo: Repository<JobEntity>,
     @InjectRepository(CandidateProfileEntity)
     private readonly profileRepo: Repository<CandidateProfileEntity>,
+    @InjectRepository(CandidatePreferenceEntity)
+    private readonly prefRepo: Repository<CandidatePreferenceEntity>,
     private readonly browserService: BrowserService,
     private readonly notificationsService: NotificationsService,
   ) {}
@@ -80,13 +84,34 @@ export class SubmissionService {
       };
     }
 
-    if (portalHost === 'linkedin.com' || portalHost.endsWith('.linkedin.com') || portalHost === 'shine.com' || portalHost.endsWith('.shine.com')) {
+    const isLinkedInOrShine = portalHost === 'linkedin.com' || portalHost.endsWith('.linkedin.com') || portalHost === 'shine.com' || portalHost.endsWith('.shine.com');
+    const pref = await this.prefRepo.findOne({ where: { userId: application.candidateId } });
+    let isSiteRegistered = Boolean(application.metadata?.siteRegistered);
+    if (!isSiteRegistered && portalHost) {
+      const priorApps = await this.appRepo.find({ where: { candidateId: application.candidateId } });
+      isSiteRegistered = priorApps.some((a) => a.metadata?.siteRegistered === true && a.metadata?.registeredHost === portalHost);
+    }
+    const hasCredentialsOrExistingAccount = Boolean(profile.portalPassword || pref?.portalPassword || application.metadata?.siteRegistered || isSiteRegistered);
+
+    if (isLinkedInOrShine && !hasCredentialsOrExistingAccount) {
       application.status = ApplicationStatus.REVIEW_REQUIRED;
-      application.failureReason = `${portalHost.includes('linkedin') ? 'LinkedIn' : 'Shine'} requires an authenticated interactive session. Open the listing in your browser and finish the application there.`;
-      application.metadata = { ...(application.metadata || {}), portalUrl: job.applicationUrl, automatedApplySupported: false };
+      application.failureReason = `${portalHost.includes('linkedin') ? 'LinkedIn' : 'Shine'} requires candidate sign-in. If you already have an account, enter your credentials in Preferences or click "I Have An Account" to apply automatically!`;
+      application.metadata = {
+        ...(application.metadata || {}),
+        portalUrl: job.applicationUrl,
+        requiresFirstTimeRegistration: true,
+        registeredHost: portalHost,
+        automatedApplySupported: true,
+      };
       await this.appRepo.save(application);
-      await this.logEvent(application.id, 'PORTAL_REQUIRES_INTERACTIVE_SESSION', application.failureReason, { portalUrl: job.applicationUrl });
-      return { status: false, requiresUserAction: true, portalUrl: job.applicationUrl, message: application.failureReason };
+      await this.logEvent(application.id, 'FIRST_TIME_REGISTRATION_REQUIRED', application.failureReason, { portalUrl: job.applicationUrl });
+      return {
+        status: false,
+        requiresUserAction: true,
+        requiresFirstTimeRegistration: true,
+        portalUrl: job.applicationUrl,
+        message: application.failureReason,
+      };
     }
 
     this.logger.log(`Initiating submission for App ID: ${application.id} to "${job.company}"`);
@@ -162,10 +187,13 @@ export class SubmissionService {
         browserResult = await this.browserService.inspectAndFillPortal(
           job.applicationUrl,
           {
+            candidateId: application.candidateId,
             fullName: profile.fullName,
             email: profile.email,
             phone: profile.phone,
             location: profile.location,
+            password: profile.portalPassword || pref?.portalPassword || undefined,
+            portalAccounts: (pref?.portalAccounts || profile.portalAccounts) || undefined,
             resumeFilePath: masterResume.storagePath,
             coverLetter: coverLetter?.content || undefined,
           },
@@ -246,7 +274,13 @@ export class SubmissionService {
     application.status = ApplicationStatus.SUBMITTED;
     application.submittedAt = new Date();
     application.failureReason = '';
-    application.metadata = { ...(application.metadata || {}), portalConfirmed: true, portalUrl: job.applicationUrl };
+    application.metadata = {
+      ...(application.metadata || {}),
+      portalConfirmed: true,
+      portalUrl: job.applicationUrl,
+      siteRegistered: true,
+      registeredHost: portalHost,
+    };
     await this.appRepo.save(application);
 
     await this.logEvent(
@@ -303,6 +337,109 @@ export class SubmissionService {
 
     await this.logEvent(application.id, 'APPLICATION_VERIFIED', `Submission verified via audit check.`);
     return { verified: true, message: 'Application marked verified.' };
+  }
+
+  async confirmRegisteredAndApply(applicationId: string, candidateId: string) {
+    const application = await this.appRepo.findOne({ where: { id: applicationId, candidateId } });
+    if (!application) throw new Error('Application not found');
+    const job = await this.jobRepo.findOne({ where: { id: application.jobId } });
+
+    let portalHost = '';
+    try { portalHost = new URL(job?.applicationUrl || '').hostname.toLowerCase(); } catch {}
+
+    application.metadata = {
+      ...(application.metadata || {}),
+      siteRegistered: true,
+      registeredHost: portalHost,
+      registeredAt: new Date().toISOString(),
+      submissionAttempted: false,
+    };
+    application.failureReason = '';
+    await this.appRepo.save(application);
+
+    await this.logEvent(
+      application.id,
+      'SITE_REGISTRATION_SAVED',
+      `Site registration confirmed for ${job?.company || portalHost}. Session saved for automated future applications.`,
+      { registeredHost: portalHost },
+    );
+
+    // Automatically submit using the saved session!
+    return this.submitApplication(applicationId);
+  }
+
+  async autoApplyMatchingJobs(userId: string, options: { minScore?: number; limit?: number } = {}) {
+    const minScore = options.minScore ?? 60;
+    const limit = options.limit ?? 5;
+
+    const [profile, masterResume] = await Promise.all([
+      this.profileRepo.findOne({ where: { userId } }),
+      this.resumeRepo.findOne({ where: { userId, isMaster: true } }),
+    ]);
+    if (!profile) throw new Error('Candidate profile not found. Please complete your profile first.');
+    const resume = masterResume || (await this.resumeRepo.findOne({ where: { userId }, order: { createdAt: 'DESC' } }));
+    if (!resume) throw new Error('Please upload a resume first before auto-applying.');
+
+    // Query active jobs
+    const jobs = await this.jobRepo.find({ where: { isActive: true }, order: { postedAt: 'DESC' }, take: 250 });
+    const scored = jobs.map((job) => ({
+      ...job,
+      match: scoreResumeAgainstJob(job, profile, resume.extractedText || ''),
+    })).filter((j) => (j.match.score ?? 0) >= minScore)
+      .sort((a, b) => (b.match.score ?? 0) - (a.match.score ?? 0))
+      .slice(0, limit);
+
+    if (!scored.length) {
+      return {
+        appliedCount: 0,
+        reviewCount: 0,
+        message: `No active jobs matched your resume with score >= ${minScore}%. Try uploading an updated resume or adjusting your preferences.`,
+      };
+    }
+
+    let appliedCount = 0;
+    let reviewCount = 0;
+    const details: Array<{ jobId: string; company: string; title: string; status: string; message: string }> = [];
+
+    for (const job of scored) {
+      let app = await this.appRepo.findOne({ where: { jobId: job.id, candidateId: userId } });
+      if (!app) {
+        app = await this.appRepo.save(this.appRepo.create({
+          id: uuidv4(),
+          jobId: job.id,
+          candidateId: userId,
+          status: ApplicationStatus.DISCOVERED,
+        }));
+      }
+
+      if ([ApplicationStatus.SUBMITTED, ApplicationStatus.VERIFIED].includes(app.status)) {
+        details.push({ jobId: job.id, company: job.company, title: job.title, status: app.status, message: 'Already submitted previously.' });
+        continue;
+      }
+
+      try {
+        const res = await this.submitApplication(app.id);
+        if (res.status) {
+          appliedCount++;
+          details.push({ jobId: job.id, company: job.company, title: job.title, status: 'SUBMITTED', message: res.message });
+        } else {
+          reviewCount++;
+          details.push({ jobId: job.id, company: job.company, title: job.title, status: 'REVIEW_REQUIRED', message: res.message });
+        }
+      } catch (err: any) {
+        details.push({ jobId: job.id, company: job.company, title: job.title, status: 'ERROR', message: err.message });
+      }
+    }
+
+    return {
+      appliedCount,
+      reviewCount,
+      totalJobs: scored.length,
+      details,
+      message: appliedCount > 0
+        ? `Auto-applied to ${appliedCount} job(s) directly! ${reviewCount > 0 ? `${reviewCount} require one-time registration or review.` : ''}`
+        : `Processed ${scored.length} matching jobs. ${reviewCount} paused for first-time site registration (once registered, future jobs on those sites apply automatically).`,
+    };
   }
 
   private async logEvent(applicationId: string, eventType: string, description: string, metadata?: any) {

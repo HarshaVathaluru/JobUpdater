@@ -131,6 +131,27 @@ export class ApplicationsController {
     return { data: result, message: result.message };
   }
 
+  @Post('auto-apply')
+  async autoApplyMatchingJobs(
+    @CurrentUser() user: UserEntity,
+    @Body() body: { minScore?: number; limit?: number },
+  ) {
+    const result = await this.submissionService.autoApplyMatchingJobs(user.id, {
+      minScore: body?.minScore,
+      limit: body?.limit,
+    });
+    return { data: result, message: result.message };
+  }
+
+  @Post(':applicationId/confirm-registered')
+  async confirmRegistered(
+    @Param('applicationId') applicationId: string,
+    @CurrentUser() user: UserEntity,
+  ) {
+    const result = await this.submissionService.confirmRegisteredAndApply(applicationId, user.id);
+    return { data: result, message: result.message };
+  }
+
   @Post(':applicationId/submit')
   async submitApplication(@Param('applicationId') applicationId: string, @CurrentUser() user: UserEntity) {
     const app = await this.appRepo.findOne({ where: { id: applicationId, candidateId: user.id } });

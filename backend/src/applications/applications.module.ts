@@ -6,6 +6,7 @@ import { ApplicationDocumentEntity } from './entities/application-document.entit
 import { ApplicationEventEntity } from './entities/application-event.entity';
 import { JobEntity } from '../jobs/entities/job.entity';
 import { CandidateProfileEntity } from '../candidate/entities/candidate-profile.entity';
+import { CandidatePreferenceEntity } from '../candidate/entities/candidate-preference.entity';
 import { JobMatchEntity } from '../matching/entities/job-match.entity';
 import { ResumeEntity } from '../resume/entities/resume.entity';
 import { ResumeVersionEntity } from '../resume/entities/resume-version.entity';
@@ -24,6 +25,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
       ApplicationEventEntity,
       JobEntity,
       CandidateProfileEntity,
+      CandidatePreferenceEntity,
       JobMatchEntity,
       ResumeEntity,
       ResumeVersionEntity,

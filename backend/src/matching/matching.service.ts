@@ -1,4 +1,4 @@
-﻿import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { NotFoundException } from '@nestjs/common';
 import { Repository } from 'typeorm';
@@ -47,7 +47,10 @@ export class MatchingService {
     }
 
     this.logger.log(`Calculating resume keyword coverage for ${job.id} (${job.title} at ${job.company}) and candidate ${candidateId}`);
-    const resume = await this.resumeRepo.findOne({ where: { userId: candidateId, isMaster: true } });
+    let resume = await this.resumeRepo.findOne({ where: { userId: candidateId, isMaster: true } });
+    if (!resume) {
+      resume = await this.resumeRepo.findOne({ where: { userId: candidateId }, order: { createdAt: 'DESC' } });
+    }
     const data = scoreResumeAgainstJob(job, profile, resume?.extractedText || '');
     const overallScore = data.score ?? 0;
     const recommendation = data.score === null ? 'REVIEW' : overallScore >= 75 ? 'APPLY' : overallScore >= 50 ? 'REVIEW' : 'SKIP';

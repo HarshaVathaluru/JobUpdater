@@ -44,6 +44,12 @@ export class CandidateProfileEntity {
   @Column('float', { array: true, nullable: true })
   embedding: number[];
 
+  @Column({ type: 'varchar', nullable: true })
+  portalPassword?: string;
+
+  @Column('simple-json', { default: '{}' })
+  portalAccounts: Record<string, any>;
+
   @CreateDateColumn()
   createdAt: Date;
 

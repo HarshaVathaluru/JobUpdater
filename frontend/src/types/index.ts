@@ -63,6 +63,7 @@ export interface Certification {
 export interface Job {
   id: string;
   source?: string;
+  candidateOwnerId?: string | null;
   company: string;
   title: string;
   location?: string;
@@ -77,6 +78,12 @@ export interface Job {
   applicationUrl?: string;
   isActive: boolean;
   createdAt: string;
+  experienceLevel?: 'ENTRY' | 'MID' | 'SENIOR';
+  experienceMin?: number | null;
+  experienceMax?: number | null;
+  experienceLabel?: string;
+  isFresh?: boolean;
+  ageHours?: number;
   resumeMatch?: {
     score: number | null;
     matchedSkills: string[];

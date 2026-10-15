@@ -63,6 +63,10 @@ export class ArbeitnowConnector implements JobSourceConnector {
                     .trim();
 
                   if (!item.slug || !item.company_name || !item.title || !item.url || !cleanDesc) return null;
+                  const pubDate = item.created_at ? new Date(typeof item.created_at === 'number' ? item.created_at * 1000 : item.created_at) : undefined;
+                  if (pubDate && !isNaN(pubDate.getTime()) && (Date.now() - pubDate.getTime() > 21 * 24 * 3600 * 1000)) {
+                    return null; // Skip stale postings older than 21 days
+                  }
                   return {
                     source: 'Arbeitnow',
                     sourceJobId: item.slug,

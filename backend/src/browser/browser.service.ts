@@ -1,8 +1,13 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import * as puppeteer from 'puppeteer-core';
 import * as fs from 'fs';
+import * as path from 'path';
+import { CandidatePreferenceEntity } from '../candidate/entities/candidate-preference.entity';
 
 export interface CandidateFormData {
+  candidateId?: string;
   fullName: string;
   email: string;
   phone?: string;
@@ -10,6 +15,8 @@ export interface CandidateFormData {
   coverLetter?: string;
   portfolioUrl?: string;
   resumeFilePath?: string;
+  password?: string;
+  portalAccounts?: Record<string, { email?: string; username?: string; password?: string }>;
 }
 
 export interface BrowserActionResult {
@@ -31,6 +38,12 @@ export interface BrowserActionResult {
 export class BrowserService {
   private readonly logger = new Logger(BrowserService.name);
 
+  constructor(
+    @Optional()
+    @InjectRepository(CandidatePreferenceEntity)
+    private readonly prefRepo?: Repository<CandidatePreferenceEntity>,
+  ) {}
+
   private getExecutablePath(): string {
     const candidates = [
       process.env.BROWSER_EXECUTABLE_PATH,
@@ -44,6 +57,23 @@ export class BrowserService {
     const executable = candidates.find((candidate) => fs.existsSync(candidate));
     if (executable) return executable;
     throw new Error('No supported browser executable found. Configure BROWSER_EXECUTABLE_PATH on the API host.');
+  }
+
+  private readonly activeInteractiveBrowsers = new Map<string, puppeteer.Browser>();
+
+  private cleanProfileLocks(candidateProfileDir: string) {
+    const lockFiles = ['SingletonLock', 'SingletonCookie', 'SingletonSocket', 'LOCK'];
+    for (const lockFile of lockFiles) {
+      try {
+        const filePath = path.join(candidateProfileDir, lockFile);
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+          this.logger.log(`Cleaned stale lock file: ${filePath}`);
+        }
+      } catch (err: any) {
+        this.logger.debug?.(`Lock file ${lockFile} in use or unremovable: ${err.message}`);
+      }
+    }
   }
 
   async inspectAndFillPortal(
@@ -63,19 +93,75 @@ export class BrowserService {
     let browser: puppeteer.Browser | null = null;
 
     try {
-      logStep('LAUNCH_BROWSER', 'Initializing headless Chromium/Chrome instance...');
-      browser = await puppeteer.launch({
-        executablePath: this.getExecutablePath(),
-        headless: 'new' as any,
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--window-size=1280,800',
-        ],
-      });
+      const candidateProfileDir = candidate.candidateId
+        ? path.resolve(process.cwd(), 'browser-profiles', candidate.candidateId)
+        : path.resolve(process.cwd(), 'browser-profiles', 'default');
+      if (!fs.existsSync(candidateProfileDir)) {
+        fs.mkdirSync(candidateProfileDir, { recursive: true });
+      }
 
-      const page = await browser.newPage();
+      // Close interactive window if active so that profile lock is released
+      if (candidate.candidateId && this.activeInteractiveBrowsers.has(candidate.candidateId)) {
+        const interactiveBrowser = this.activeInteractiveBrowsers.get(candidate.candidateId);
+        if (interactiveBrowser && interactiveBrowser.isConnected()) {
+          logStep('INTERACTIVE_CLOSE', 'Closing active interactive session window so automated agent can use the profile...');
+          await interactiveBrowser.close().catch(() => {});
+          await new Promise((r) => setTimeout(r, 800));
+        }
+        this.activeInteractiveBrowsers.delete(candidate.candidateId);
+      }
+
+      this.cleanProfileLocks(candidateProfileDir);
+
+      logStep('LAUNCH_BROWSER', `Initializing Chromium with persistent profile: ${candidateProfileDir}`);
+      let launchError: any = null;
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          browser = await puppeteer.launch({
+            executablePath: this.getExecutablePath(),
+            headless: 'new' as any,
+            userDataDir: candidateProfileDir,
+            args: [
+              '--no-sandbox',
+              '--disable-setuid-sandbox',
+              '--disable-dev-shm-usage',
+              '--window-size=1280,800',
+            ],
+          });
+          launchError = null;
+          break;
+        } catch (err: any) {
+          launchError = err;
+          this.logger.warn(`Browser launch attempt ${attempt} failed: ${err.message}`);
+          if (attempt === 1) {
+            this.cleanProfileLocks(candidateProfileDir);
+            await new Promise((r) => setTimeout(r, 1000));
+          }
+        }
+      }
+
+      if (!browser && launchError) {
+        const fallbackDir = path.resolve(process.cwd(), 'browser-profiles', `${candidate.candidateId || 'default'}-worker-${Date.now()}`);
+        fs.mkdirSync(fallbackDir, { recursive: true });
+        logStep('LAUNCH_FALLBACK', `Primary profile locked; continuing in isolated profile: ${fallbackDir}`);
+        browser = await puppeteer.launch({
+          executablePath: this.getExecutablePath(),
+          headless: 'new' as any,
+          userDataDir: fallbackDir,
+          args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--window-size=1280,800',
+          ],
+        });
+      }
+
+      if (!browser) {
+        throw launchError || new Error('Failed to launch Chromium browser.');
+      }
+
+      let page = await browser.newPage();
       logStep('NAVIGATE_PORTAL', `Navigating to employer vacancy portal: ${portalUrl}`);
       let navigationError: unknown;
       for (let attempt = 1; attempt <= 3; attempt++) {
@@ -124,54 +210,198 @@ export class BrowserService {
         };
       }
 
-      // Check for employer login requirements (e.g., Workday candidate sign-in)
-      const requiresLogin = await page.evaluate(() => {
+      // Check if an actual candidate application form is already visible
+      const hasVisibleApplicationForm = await page.evaluate(() => {
+        const visible = (element: Element) => (element as HTMLElement).getClientRects().length > 0;
+        const forms = Array.from(document.querySelectorAll('form, [role="form"], [role="dialog"], .jobs-easy-apply-modal, .application-form, div[class*="application" i]')).filter(visible);
+        return forms.some((form) => {
+          const text = `${(form as HTMLElement).innerText || ''} ${form.getAttribute('aria-label') || ''}`.toLowerCase();
+          const inputs = Array.from(form.querySelectorAll('input, textarea, select')).map((i) => {
+            const el = i as HTMLInputElement;
+            return `${el.name} ${el.id} ${el.type} ${el.placeholder} ${el.getAttribute('aria-label') || ''}`.toLowerCase();
+          }).join(' ');
+          const hasResume = !!form.querySelector('input[type="file"]') || /resume|cv|upload/i.test(inputs);
+          const hasCandidateInfo = /first.?name|last.?name|full.?name|applicant|candidate|cover.?letter/i.test(`${text} ${inputs}`);
+          return hasResume || hasCandidateInfo;
+        });
+      });
+
+      // If no candidate form is visible yet, locate and click the Apply action
+      if (!hasVisibleApplicationForm) {
+        logStep('APPLY_ACTION_SEARCH', 'Scanning listing for employer Apply / Easy Apply action button or link...');
+
+        const actionData = await page.evaluate(() => {
+          const visible = (element: Element) => (element as HTMLElement).getClientRects().length > 0;
+
+          const knownSelectors = [
+            'button[data-modal="job-details-topcard-apply-modal"]',
+            'button[data-modal*="apply" i]',
+            'button[data-easy-apply-btn]',
+            '.jobs-apply-button',
+            'a[href*="externalApply"]',
+            'a[data-tracking-control-name*="apply" i]',
+            '[data-automation-id="applyButton"]',
+            '[data-automation-id="adventureButton"]',
+            'a.apply_btn',
+            'button.apply_btn',
+            'a[id*="apply" i]',
+            'button[id*="apply" i]',
+            'a.postings-btn',
+            '#apply_button',
+            '[data-qa="btn-apply"]',
+            '[data-qa="apply-button"]',
+            'button.btn-apply',
+            'a.btn-apply',
+            'button[aria-label*="apply" i]',
+            'a[aria-label*="apply" i]',
+          ];
+
+          for (const sel of knownSelectors) {
+            const el = document.querySelector(sel);
+            if (el && visible(el)) {
+              const marker = `autoapply-action-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+              el.setAttribute('data-autoapply-action', marker);
+              const href = (el as HTMLAnchorElement).href || el.getAttribute('href') || null;
+              return { selector: `[data-autoapply-action="${marker}"]`, href, text: el.textContent?.trim() };
+            }
+          }
+
+          const candidates = Array.from(document.querySelectorAll('button, a, [role="button"]')).filter(visible);
+          const matched = candidates.find((el) => {
+            const text = `${el.textContent || ''} ${el.getAttribute('aria-label') || ''}`.replace(/\s+/g, ' ').trim().toLowerCase();
+            if (/apply filters|search/i.test(text)) return false;
+            return /\b(apply|easy apply|apply now|apply for this job|apply on company website|apply to|start application|continue to apply)\b/i.test(text);
+          });
+
+          if (matched) {
+            const marker = `autoapply-action-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+            matched.setAttribute('data-autoapply-action', marker);
+            const href = (matched as HTMLAnchorElement).href || matched.getAttribute('href') || null;
+            return { selector: `[data-autoapply-action="${marker}"]`, href, text: matched.textContent?.trim() };
+          }
+
+          return null;
+        });
+
+        if (actionData?.selector) {
+          logStep('APPLY_ACTION_FOUND', `Found application action: "${actionData.text || 'Apply'}". Opening employer application...`);
+
+          const newTargetPromise = new Promise<puppeteer.Page | null>((resolve) => {
+            const timer = setTimeout(() => resolve(null), 6000);
+            const handler = async (target: puppeteer.Target) => {
+              if (target.type() === 'page') {
+                const p = await target.page();
+                if (p) {
+                  clearTimeout(timer);
+                  browser?.off('targetcreated', handler);
+                  resolve(p);
+                }
+              }
+            };
+            browser?.on('targetcreated', handler);
+          });
+
+          await page.click(actionData.selector).catch(() => {});
+          const newPage = await newTargetPromise;
+
+          if (newPage) {
+            page = newPage;
+            await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 8000 }).catch(() => {});
+            await new Promise((r) => setTimeout(r, 2000));
+            logStep('EMPLOYER_PORTAL_OPENED', `Followed external application redirect to: ${page.url()}`);
+          } else {
+            await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 5000 }).catch(() => {});
+            await new Promise((r) => setTimeout(r, 2000));
+          }
+        }
+      }
+
+      // Check if page or modal requires candidate sign-in / registration
+      let requiresLogin = await page.evaluate(() => {
         const text = document.body?.innerText?.toLowerCase() || '';
+        const hasSignInForm = !!document.querySelector('form[data-id="sign-in-form"], .contextual-sign-in-modal, input[name="session_key"], input[name="session_password"]');
+        const hasPasswordInput = Array.from(document.querySelectorAll('input[type="password"]')).some((input) => (input as HTMLElement).getClientRects().length > 0);
         return (
+          hasSignInForm ||
+          text.includes('sign in to find your next job') ||
           text.includes('sign in to apply') ||
           text.includes('create an account to apply') ||
           text.includes('log in to your account') ||
-          Array.from(document.querySelectorAll('form input[type="password"]')).some((input) => (input as HTMLElement).getClientRects().length > 0)
+          hasPasswordInput
         );
       });
 
       if (requiresLogin) {
-        logStep('LOGIN_REQUIRED', 'Employer portal requires candidate authentication/account creation.');
-      }
+        logStep('LOGIN_CHECK', 'Portal prompted for authentication. Checking automated session/credentials...');
 
-      // Many ATS job pages hide the application fields until this button is
-      // pressed. Opening that panel does not submit anything.
-      const applicationActionSelector = await page.evaluate(() => {
-        const visible = (element: Element) => (element as HTMLElement).getClientRects().length > 0;
-        const hasVisibleApplicationFields = Array.from(document.querySelectorAll('form, [role="form"]')).some((form) =>
-          visible(form) && !!form.querySelector('input, textarea, select'),
-        );
-        if (hasVisibleApplicationFields) return null;
-        const actions = Array.from(document.querySelectorAll('button, a, [role="button"]')).filter(visible);
-        const applyAction = actions.find((element) => {
-          const label = `${element.textContent || ''} ${element.getAttribute('aria-label') || ''}`.replace(/\s+/g, ' ').trim().toLowerCase();
-          return /^(apply|apply for this job|apply now|start application)$/.test(label);
-        }) as HTMLElement | undefined;
-        if (!applyAction) return null;
-        const marker = `autoapply-action-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        applyAction.setAttribute('data-autoapply-action', marker);
-        return `[data-autoapply-action="${marker}"]`;
-      });
-      if (applicationActionSelector) {
-        await Promise.all([
-          page.click(applicationActionSelector).catch(() => {}),
-          page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 5000 }).catch(() => {}),
-        ]);
-        logStep('APPLICATION_PANEL_OPENED', 'Opened the employer application panel; no submission action was taken.');
-        await new Promise((resolve) => setTimeout(resolve, 1800));
+        // Resolve portal-specific credentials
+        let activeEmail = candidate.email;
+        let activePassword = candidate.password;
+
+        if (candidate.portalAccounts) {
+          const currentUrlLower = (page.url() || portalUrl).toLowerCase();
+          for (const [key, acc] of Object.entries(candidate.portalAccounts)) {
+            if (!acc) continue;
+            const k = key.toLowerCase();
+            if (
+              currentUrlLower.includes(k) ||
+              (k === 'linkedin' && currentUrlLower.includes('linkedin')) ||
+              (k === 'shine' && currentUrlLower.includes('shine')) ||
+              (k === 'indeed' && currentUrlLower.includes('indeed')) ||
+              (k === 'naukri' && currentUrlLower.includes('naukri'))
+            ) {
+              if (acc.email || acc.username) activeEmail = acc.email || acc.username || activeEmail;
+              if (acc.password) activePassword = acc.password;
+              break;
+            }
+          }
+          if (!activePassword && candidate.portalAccounts.universal?.password) {
+            activePassword = candidate.portalAccounts.universal.password;
+            if (candidate.portalAccounts.universal.email) {
+              activeEmail = candidate.portalAccounts.universal.email;
+            }
+          }
+        }
+
+        const autofillRegistered = await page.evaluate((email, password) => {
+          const emailInput = document.querySelector('input[name="session_key"], input[id="session_key"], input[type="email"], input[name*="email" i], input[id*="email" i], input[name*="user" i]') as HTMLInputElement;
+          const passwordInput = document.querySelector('input[name="session_password"], input[id="session_password"], input[type="password"]') as HTMLInputElement;
+          if (emailInput && passwordInput && password) {
+            emailInput.value = email;
+            passwordInput.value = password;
+            emailInput.dispatchEvent(new Event('input', { bubbles: true }));
+            passwordInput.dispatchEvent(new Event('input', { bubbles: true }));
+            const submitBtn = document.querySelector('button[data-id="sign-in-form__submit-btn"], form[data-id="sign-in-form"] button[type="submit"], button[type="submit"], input[type="submit"]') as HTMLElement;
+            if (submitBtn) {
+              submitBtn.click();
+              return true;
+            }
+          }
+          return false;
+        }, activeEmail, activePassword);
+
+        if (autofillRegistered) {
+          logStep('AUTO_AUTH_ATTEMPTED', 'Autofilled candidate credentials on sign-in form.');
+          await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 8000 }).catch(() => {});
+          await new Promise((r) => setTimeout(r, 2000));
+          requiresLogin = await page.evaluate(() => {
+            const text = document.body?.innerText?.toLowerCase() || '';
+            return text.includes('sign in to find your next job') || text.includes('sign in to apply') || text.includes('create an account to apply');
+          });
+          if (!requiresLogin) {
+            logStep('SESSION_ACTIVATED', 'Successfully authenticated! Session cookies saved to profile for automatic future applications.');
+          }
+        } else {
+          logStep('LOGIN_REQUIRED', 'Portal requires candidate sign-in or saved session.');
+        }
       }
 
       const applicationFormSelector = await page.evaluate(() => {
         const visible = (element: Element) => (element as HTMLElement).getClientRects().length > 0;
-        const forms = Array.from(document.querySelectorAll('form, [role="form"]')).filter(visible);
-        const scored = forms.map((form) => {
-          const text = `${(form as HTMLElement).innerText || ''} ${form.getAttribute('aria-label') || ''}`.toLowerCase();
-          const fields = Array.from(form.querySelectorAll('input, textarea, select')).filter(visible);
+        const containers = Array.from(document.querySelectorAll('form, [role="form"], [role="dialog"], .jobs-easy-apply-modal, .application-form, div[id*="application" i], div[class*="application" i]')).filter(visible);
+        const scored = containers.map((container) => {
+          const text = `${(container as HTMLElement).innerText || ''} ${container.getAttribute('aria-label') || ''}`.toLowerCase();
+          const fields = Array.from(container.querySelectorAll('input, textarea, select')).filter(visible);
           const descriptors = fields.map((field) => {
             const element = field as HTMLInputElement;
             const labels = Array.from(element.labels || []).map((label) => label.innerText).join(' ');
@@ -184,19 +414,40 @@ export class BrowserService {
           if (/resume|cv|upload|file/.test(descriptors)) score += 2;
           if (/phone|telephone|location|city|linkedin|cover.?letter/.test(descriptors)) score += 1;
           const hasApplicationSignal = /apply|application|candidate|resume|cv/.test(`${text} ${descriptors}`);
-          return { form, fields, score, hasApplicationSignal };
-        }).filter((candidate) => candidate.fields.length > 0 && candidate.hasApplicationSignal)
+          return { container, fields, score, hasApplicationSignal };
+        }).filter((cand) => cand.fields.length > 0 && cand.hasApplicationSignal)
           .sort((a, b) => b.score - a.score);
-        const selected = scored[0]?.form as HTMLElement | undefined;
+
+        const selected = scored[0]?.container as HTMLElement | undefined;
         if (!selected) return null;
         const marker = `autoapply-${Date.now()}-${Math.random().toString(36).slice(2)}`;
         selected.setAttribute('data-autoapply-form', marker);
         return `[data-autoapply-form="${marker}"]`;
       });
+
+      const currentTitle = await page.title();
+      const currentUrl = page.url();
+
       if (!applicationFormSelector) {
-        const reason = 'Could not identify an employer application form. Open the listing and complete it manually.';
-        logStep('APPLICATION_FORM_NOT_FOUND', reason);
-        return { success: false, pageTitle, finalUrl, steps, detectedFields, filledFields, hasCaptcha: false, requiresUserAction: true, userActionReason: reason, confirmationDetected: false };
+        let reason = 'Could not identify an employer application form. Open the listing and complete it manually.';
+        if (requiresLogin) {
+          reason = 'First-time registration or login required on this site. Log in once; your session is automatically saved to your candidate profile so next time you will apply automatically!';
+        } else if (currentUrl !== portalUrl) {
+          reason = 'Employer listing redirects to external career page. Open the link to review and finalize.';
+        }
+        logStep(requiresLogin ? 'LOGIN_REQUIRED' : 'APPLICATION_FORM_NOT_FOUND', reason);
+        return {
+          success: false,
+          pageTitle: currentTitle || pageTitle,
+          finalUrl: currentUrl || finalUrl,
+          steps,
+          detectedFields,
+          filledFields,
+          hasCaptcha: false,
+          requiresUserAction: true,
+          userActionReason: reason,
+          confirmationDetected: false,
+        };
       }
 
       // Inspect form inputs
@@ -422,7 +673,7 @@ export class BrowserService {
         hasCaptcha: false,
         requiresUserAction,
         userActionReason: requiresLogin
-          ? 'Company portal requires direct candidate login/account.'
+          ? 'First-time registration or login required on this site. Log in once; your session is automatically saved to your candidate profile so next time you will apply automatically!'
           : filledFields.length === 0
           ? 'No standard form inputs could be filled automatically on this portal.'
           : requiredFieldsRemaining.length > 0
@@ -458,5 +709,265 @@ export class BrowserService {
         logStep('CLOSE_BROWSER', 'Cleaned up browser session.');
       }
     }
+  }
+
+  private async autofillSessionPage(page: puppeteer.Page, credentials?: { portalKey?: string; email?: string; password?: string }) {
+    if (!credentials?.email && !credentials?.password) return false;
+    this.logger.log(`Autofilling login credentials for portal ${credentials.portalKey || 'portal'} (User: ${credentials.email})`);
+
+    // Give dynamic login pages (Shine, Naukri, LinkedIn) time to render inputs
+    await new Promise((r) => setTimeout(r, 2000));
+
+    try {
+      const result = await page.evaluate((email, password) => {
+        const userSelectors = [
+          '#id_email_login', // Shine
+          '#usernameField',  // Naukri
+          '#username',       // LinkedIn
+          '#session_key',    // LinkedIn alt
+          'input[name="session_key"]',
+          '#email',
+          'input[name="email"]',
+          'input[name="username"]',
+          'input[type="email"]',
+          'input[placeholder*="email" i]',
+          'input[placeholder*="username" i]',
+          'input[placeholder*="mobile" i]',
+          'input[placeholder*="phone" i]',
+          'input[name*="user" i]',
+          'input[name*="login" i]',
+          'input[id*="email" i]',
+          'input[id*="login" i]',
+          'input[id*="username" i]',
+        ];
+
+        let userEl: HTMLInputElement | null = null;
+        for (const sel of userSelectors) {
+          const el = document.querySelector(sel) as HTMLInputElement;
+          if (el && (el.offsetWidth > 0 || el.getClientRects().length > 0)) {
+            userEl = el;
+            break;
+          }
+        }
+
+        const passSelectors = [
+          '#id_password',     // Shine
+          '#passwordField',   // Naukri
+          '#password',        // LinkedIn
+          '#session_password',
+          'input[name="session_password"]',
+          'input[name="password"]',
+          'input[type="password"]',
+        ];
+
+        let passEl: HTMLInputElement | null = null;
+        for (const sel of passSelectors) {
+          const el = document.querySelector(sel) as HTMLInputElement;
+          if (el && (el.offsetWidth > 0 || el.getClientRects().length > 0)) {
+            passEl = el;
+            break;
+          }
+        }
+
+        let filled = false;
+        if (userEl && email) {
+          userEl.focus();
+          userEl.value = email;
+          userEl.dispatchEvent(new Event('input', { bubbles: true }));
+          userEl.dispatchEvent(new Event('change', { bubbles: true }));
+          filled = true;
+        }
+
+        if (passEl && password) {
+          passEl.focus();
+          passEl.value = password;
+          passEl.dispatchEvent(new Event('input', { bubbles: true }));
+          passEl.dispatchEvent(new Event('change', { bubbles: true }));
+          filled = true;
+        }
+
+        if (userEl && passEl && email && password) {
+          const submitSelectors = [
+            'button[type="submit"]',
+            'button[data-id="sign-in-form__submit-btn"]',
+            '.cls_login_btn',
+            '.loginButton',
+            'button.btn-primary',
+            'input[type="submit"]',
+            'form button',
+          ];
+          for (const sel of submitSelectors) {
+            const btn = document.querySelector(sel) as HTMLElement;
+            if (btn && (btn.offsetWidth > 0 || btn.getClientRects().length > 0)) {
+              setTimeout(() => btn.click(), 400);
+              break;
+            }
+          }
+        }
+
+        return filled;
+      }, credentials.email || '', credentials.password || '');
+
+      return result;
+    } catch (e: any) {
+      this.logger.warn(`Interactive autofill skipped: ${e.message}`);
+      return false;
+    }
+  }
+
+  async launchInteractiveSession(
+    candidateId: string,
+    targetUrl = 'https://www.linkedin.com/login',
+    credentials?: { portalKey?: string; email?: string; password?: string },
+  ) {
+    try {
+      // Save credentials into candidate preferences if provided
+      if (this.prefRepo && credentials?.portalKey && (credentials.email || credentials.password)) {
+        try {
+          const pref = await this.prefRepo.findOne({ where: { userId: candidateId } });
+          if (pref) {
+            const existingAccounts = pref.portalAccounts || {};
+            const keyLower = credentials.portalKey.toLowerCase().replace(/[^a-z]/g, '');
+            existingAccounts[keyLower] = {
+              email: credentials.email || existingAccounts[keyLower]?.email || '',
+              password: credentials.password || existingAccounts[keyLower]?.password || '',
+              linked: true,
+              lastLinkedAt: new Date().toISOString(),
+            };
+            pref.portalAccounts = existingAccounts;
+            await this.prefRepo.save(pref);
+            this.logger.log(`Persisted portal account for ${keyLower} to candidate preferences.`);
+          }
+        } catch (dbErr: any) {
+          this.logger.warn(`Could not update candidate preference portalAccount: ${dbErr.message}`);
+        }
+      }
+
+      // If an interactive session is already open and connected, focus it and navigate
+      if (this.activeInteractiveBrowsers.has(candidateId)) {
+        const existing = this.activeInteractiveBrowsers.get(candidateId);
+        if (existing && existing.isConnected()) {
+          this.logger.log(`Focusing existing interactive browser session for candidate: ${candidateId}`);
+          try {
+            const pages = await existing.pages();
+            const page = pages[0] || (await existing.newPage());
+            await page.bringToFront().catch(() => {});
+            if (targetUrl) {
+              await page.goto(targetUrl, { waitUntil: 'domcontentloaded' }).catch(() => {});
+              if (credentials?.email || credentials?.password) {
+                await this.autofillSessionPage(page, credentials);
+              }
+            }
+            return {
+              status: true,
+              message: `Opened ${credentials?.portalKey || 'portal'} login in your browser window and autofilled your credentials!`,
+            };
+          } catch (e: any) {
+            this.logger.warn(`Error reusing interactive browser: ${e.message}. Launching fresh window.`);
+            await existing.close().catch(() => {});
+            this.activeInteractiveBrowsers.delete(candidateId);
+          }
+        } else {
+          this.activeInteractiveBrowsers.delete(candidateId);
+        }
+      }
+
+      const candidateProfileDir = candidateId
+        ? path.resolve(process.cwd(), 'browser-profiles', candidateId)
+        : path.resolve(process.cwd(), 'browser-profiles', 'default');
+      if (!fs.existsSync(candidateProfileDir)) {
+        fs.mkdirSync(candidateProfileDir, { recursive: true });
+      }
+
+      this.cleanProfileLocks(candidateProfileDir);
+
+      this.logger.log(`Launching interactive browser window for candidate: ${candidateId} at ${targetUrl}`);
+      let browser: puppeteer.Browser | null = null;
+      try {
+        browser = await puppeteer.launch({
+          executablePath: this.getExecutablePath(),
+          headless: false,
+          userDataDir: candidateProfileDir,
+          args: ['--no-sandbox', '--disable-setuid-sandbox', '--window-size=1280,850'],
+        });
+      } catch (launchErr: any) {
+        this.logger.warn(`Interactive browser direct launch failed (${launchErr.message}), cleaning locks and retrying...`);
+        this.cleanProfileLocks(candidateProfileDir);
+        await new Promise((r) => setTimeout(r, 800));
+        browser = await puppeteer.launch({
+          executablePath: this.getExecutablePath(),
+          headless: false,
+          userDataDir: candidateProfileDir,
+          args: ['--no-sandbox', '--disable-setuid-sandbox', '--window-size=1280,850'],
+        });
+      }
+
+      this.activeInteractiveBrowsers.set(candidateId, browser);
+      browser.on('disconnected', () => {
+        this.logger.log(`Interactive browser closed for candidate: ${candidateId}`);
+        this.activeInteractiveBrowsers.delete(candidateId);
+      });
+
+      const page = (await browser.pages())[0] || (await browser.newPage());
+      await page.goto(targetUrl, { waitUntil: 'domcontentloaded' }).catch(() => {});
+
+      if (credentials?.email || credentials?.password) {
+        await this.autofillSessionPage(page, credentials);
+      }
+
+      return {
+        status: true,
+        message: `Interactive window opened on your screen with ${credentials?.portalKey || 'portal'} credentials autofilled! Cookies will be saved permanently.`,
+      };
+    } catch (err: any) {
+      this.logger.error(`Failed to launch interactive session: ${err.message}`);
+      return {
+        status: false,
+        message: `Could not launch desktop browser: ${err.message}`,
+      };
+    }
+  }
+
+  async checkSessionStatus(candidateId: string) {
+    const candidateProfileDir = candidateId
+      ? path.resolve(process.cwd(), 'browser-profiles', candidateId)
+      : path.resolve(process.cwd(), 'browser-profiles', 'default');
+    const exists = fs.existsSync(candidateProfileDir);
+    let cookieCount = 0;
+    if (exists) {
+      try {
+        const files = fs.readdirSync(candidateProfileDir);
+        cookieCount = files.length;
+      } catch {}
+    }
+
+    const linkedPortals: Record<string, boolean> = {
+      linkedin: false,
+      shine: false,
+      indeed: false,
+      naukri: false,
+      universal: false,
+    };
+
+    if (this.prefRepo) {
+      try {
+        const pref = await this.prefRepo.findOne({ where: { userId: candidateId } });
+        if (pref?.portalAccounts) {
+          for (const [key, acc] of Object.entries(pref.portalAccounts)) {
+            const k = key.toLowerCase();
+            if (acc && (acc.email || acc.username || acc.password || acc.linked)) {
+              linkedPortals[k] = true;
+            }
+          }
+        }
+      } catch {}
+    }
+
+    return {
+      hasProfile: exists,
+      hasSession: cookieCount > 2,
+      profileDir: candidateProfileDir,
+      linkedPortals,
+    };
   }
 }

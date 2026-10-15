@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { JobsService } from './jobs.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -10,8 +10,19 @@ export class JobsController {
   constructor(private readonly jobsService: JobsService) {}
 
   @Get()
-  async getJobs(@CurrentUser() user: UserEntity) {
-    const jobs = await this.jobsService.getJobsForCandidate(user.id);
+  async getJobs(
+    @CurrentUser() user: UserEntity,
+    @Query('postedWithinDays') postedWithinDays?: string,
+    @Query('experienceLevel') experienceLevel?: 'ALL' | 'ENTRY' | 'MID' | 'SENIOR',
+    @Query('hideLinkedIn') hideLinkedIn?: string,
+    @Query('hideShine') hideShine?: string,
+  ) {
+    const jobs = await this.jobsService.getJobsForCandidate(user.id, {
+      postedWithinDays: postedWithinDays ? parseInt(postedWithinDays, 10) : undefined,
+      experienceLevel,
+      hideLinkedIn: hideLinkedIn === 'true',
+      hideShine: hideShine === 'true',
+    });
     return { data: jobs };
   }
 

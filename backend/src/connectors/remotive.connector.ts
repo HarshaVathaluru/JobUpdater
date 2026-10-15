@@ -53,6 +53,10 @@ export class RemotiveConnector implements JobSourceConnector {
                     .trim();
 
                   if (!item.id || !item.company_name || !item.title || !item.url || !cleanDesc) return null;
+                  const pubDate = item.publication_date ? new Date(item.publication_date) : undefined;
+                  if (pubDate && (Date.now() - pubDate.getTime() > 14 * 24 * 3600 * 1000)) {
+                    return null; // Skip stale postings older than 14 days
+                  }
                   return {
                     source: 'Remotive',
                     sourceJobId: String(item.id),

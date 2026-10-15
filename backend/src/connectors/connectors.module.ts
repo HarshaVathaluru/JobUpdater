@@ -8,6 +8,9 @@ import { CandidateModule } from '../candidate/candidate.module';
 import { RemotiveConnector } from './remotive.connector';
 import { JobicyConnector } from './jobicy.connector';
 import { ArbeitnowConnector } from './arbeitnow.connector';
+import { ShineConnector } from './shine.connector';
+import { LinkedInConnector } from './linkedin.connector';
+import { IndeedConnector } from './indeed.connector';
 import { QueueModule } from '../queue/queue.module';
 
 @Module({
@@ -26,12 +29,18 @@ import { QueueModule } from '../queue/queue.module';
     RemotiveConnector,
     JobicyConnector,
     ArbeitnowConnector,
+    ShineConnector,
+    LinkedInConnector,
+    IndeedConnector,
   ],
   exports: [
     DiscoveryService,
     RemotiveConnector,
     JobicyConnector,
     ArbeitnowConnector,
+    ShineConnector,
+    LinkedInConnector,
+    IndeedConnector,
   ],
 })
 export class ConnectorsModule {}

@@ -35,6 +35,12 @@ export class CandidatePreferenceEntity {
   @Column({ type: 'varchar', default: 'REVIEW_FIRST' })
   autoApplyPolicy: string;
 
+  @Column({ type: 'varchar', nullable: true })
+  portalPassword?: string;
+
+  @Column('simple-json', { default: '{}' })
+  portalAccounts: Record<string, any>;
+
   @CreateDateColumn()
   createdAt: Date;
 

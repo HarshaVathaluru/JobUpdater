@@ -1,4 +1,4 @@
-﻿import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
@@ -47,7 +47,7 @@ export class CandidateService {
   async updateProfile(userId: string, data: Partial<CandidateProfileEntity>): Promise<CandidateProfileEntity> {
     let profile = await this.profileRepo.findOne({ where: { userId } });
     if (!profile) profile = this.profileRepo.create({ id: uuidv4(), userId, fullName: '', email: '' });
-    const editableFields: Array<keyof CandidateProfileEntity> = ['fullName', 'email', 'phone', 'location', 'summary', 'skills', 'experience', 'education', 'projects', 'certifications', 'achievements'];
+    const editableFields: Array<keyof CandidateProfileEntity> = ['fullName', 'email', 'phone', 'location', 'summary', 'skills', 'experience', 'education', 'projects', 'certifications', 'achievements', 'portalPassword', 'portalAccounts'];
     for (const field of editableFields) {
       if (data[field] !== undefined) (profile as any)[field] = data[field];
     }
